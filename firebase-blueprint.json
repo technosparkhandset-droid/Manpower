@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User account registration with role-based security access.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "passwordHash": { "type": "string" },
+        "plainPassword": { "type": "string" }
+      },
+      "required": ["id", "email", "role", "isActive", "createdAt"]
+    },
+    "Profile": {
+      "title": "Profile",
+      "description": "Public verified manpower directory profile details.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user": { "type": "string" },
+        "fullName": { "type": "string" },
+        "phone": { "type": "string" },
+        "age": { "type": "number" },
+        "gender": { "type": "string" },
+        "locationIndex": { "type": "number" },
+        "division": { "type": "string" },
+        "district": { "type": "string" },
+        "serviceArea": { "type": "string" },
+        "role": { "type": "string" },
+        "primaryCategory": { "type": "string" },
+        "experienceYears": { "type": "number" },
+        "rating": { "type": "number" },
+        "jobsCompleted": { "type": "number" },
+        "bio": { "type": "string" },
+        "slug": { "type": "string" },
+        "profileViews": { "type": "number" },
+        "isPublic": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "isPremium": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "user", "fullName", "phone", "role"]
+    },
+    "Job": {
+      "title": "Job",
+      "description": "Available vacancy and contract requests posted by employers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "division": { "type": "string" },
+        "district": { "type": "string" },
+        "budget": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "postedByName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "description", "category", "division", "district", "budget", "contactPhone"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Security-sensitive user authorization records"
+    },
+    "profiles/{profileId}": {
+      "schema": "Profile",
+      "description": "Bilingual specialist and workers/employers directory listings"
+    },
+    "jobs/{jobId}": {
+      "schema": "Job",
+      "description": "Active job board listing entities"
+    },
+    "analytics/{analyticsId}": {
+      "schema": "string",
+      "description": "Daily metrics data structure and tracking counters"
+    }
+  }
+}

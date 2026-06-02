@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-gray-50: #f8fafc;
+  --color-gray-100: #e2e8f0;
+  --color-gray-200: #cbd5e1;
+  --color-gray-300: #94a3b8;
+  --color-gray-400: #64748b;
+  --color-gray-500: #475569;
+  
+  /* Bento Grid Dark Mode Theme Colors */
+  --color-gray-855: #111318;
+  --color-gray-850: #111318;
+  --color-gray-800: #1c1e24;
+  --color-gray-900: #0a0b10;
+  --color-gray-905: #0a0b10;
+  --color-gray-910: #050608;
+
+  /* Custom Borders for Bento Accentuation */
+  --color-gray-800: #1e293b;
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: scale(0.98); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+/* Custom Animation Utility Classes */
+.animate-fade-in {
+  animation: fade-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Custom Eye-Safe Dark Mode Scrollbars for Premium Aesthetics */
+html.dark ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+html.dark ::-webkit-scrollbar-track {
+  background: #0a0b10;
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background: #111318;
+  border-radius: 4px;
+  border: 1px solid #1e293b;
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #1e293b;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Printable Layout CSS overrides */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    overflow: visible !important;
+  }
+
+  /* Hide standard page blocks, navigation, footer and interactive triggers */
+  nav, footer, header, .print\:hidden, button, a[id="whatsapp-contact-admin"], .backdrop-blur-md {
+    display: none !important;
+  }
+
+  /* Make everything light-colored and high contrast for printing */
+  * {
+    background: transparent !important;
+    color: #000000 !important;
+    border-color: #cbd5e1 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  img {
+    filter: none !important;
+  }
+
+  /* Position modal in full width static flow for print */
+  #profile-detailed-modal, #admin-profiles-print-board {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  #profile-detailed-modal > div {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    height: auto !important;
+    border: none !important;
+    overflow: visible !important;
+  }
+
+  /* Display elements correctly */
+  .grid {
+    display: block !important;
+  }
+  
+  .grid > div {
+    margin-bottom: 1.5rem !important;
+    page-break-inside: avoid !important;
+  }
+}
+
+/* Custom Bento Grid Accentuation Style Components */
+.bento-card-glow {
+  transition: all 0.3s ease;
+}
+.bento-card-glow:hover {
+  box-shadow: 0 10px 30px -10px rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+.dark .bento-card-glow:hover {
+  box-shadow: 0 10px 40px -15px rgba(59, 130, 246, 0.3);
+  border-color: #3b82f6;
+}
+
