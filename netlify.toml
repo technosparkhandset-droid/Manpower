@@ -1,0 +1,16 @@
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+# 1. Forward all API calls to the live full-stack backend running on Cloud Run
+[[redirects]]
+  from = "/api/*"
+  to = "https://ais-pre-spzib3qzfguwlwgxh2tq47-894627415149.asia-southeast1.run.app/api/:splat"
+  status = 200
+  force = true
+
+# 2. Support SPA Routing (Redirect all other file routes to index.html)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
