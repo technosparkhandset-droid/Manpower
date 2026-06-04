@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 import { useTheme } from '../../context/ThemeContext';
 import { BANGLADESH_LOCATIONS, DIVISIONS_LIST } from '../../data/bangladeshData';
 import { 
   Save, Loader2, Sparkles, Check, ArrowRight, User, ShieldAlert, BadgeInfo,
   Briefcase, Activity, Calendar, MapPin, Star, Plus, Eye, Trash2, Edit3, MessageSquare, Megaphone,
-  Download, Upload, FileText, Printer, TrendingUp, AlertCircle, ShoppingBag, EyeOff, Lock, Unlock, PhoneCall
+  Download, Upload, FileText, Printer, TrendingUp, AlertCircle, ShoppingBag, EyeOff, Lock, Unlock, PhoneCall, Camera,
+  RefreshCw, Database
 } from 'lucide-react';
 import { 
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid
@@ -127,6 +128,25 @@ const CreateEditProfile: React.FC = () => {
   const [adminProfileFilter, setAdminProfileFilter] = useState<'all' | 'pending' | 'approved'>('all');
   const [analytics, setAnalytics] = useState<any>(null);
   const [adminLoading, setAdminLoading] = useState(false);
+  const [firestoreLogs, setFirestoreLogs] = useState<any[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [autoPollLogs, setAutoPollLogs] = useState(true);
+
+  const loadFirestoreLogs = async () => {
+    try {
+      setIsLoadingLogs(true);
+      const token = localStorage.getItem('authToken');
+      const res = await fetch('/api/admin/firestore-logs', { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (data.success) {
+        setFirestoreLogs(data.logs);
+      }
+    } catch (err) {
+      console.error('Failed to load firestore logs:', err);
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  };
 
   // Admin form modal (for Admin CRUD add/edit profiles)
   const [adminModalOpen, setAdminModalOpen] = useState(false);
@@ -163,11 +183,90 @@ const CreateEditProfile: React.FC = () => {
   });
 
   const categoriesKeys = [
-    'electrician', 'tailoring', 'healthcare', 'construction', 'civil_engineer',
+    'krishikaj', 'local_delivery', 'electrician', 'tailoring', 'healthcare', 'construction', 'civil_engineer',
     'land_services', 'helper', 'plumber', 'painter', 'carpenter', 'ac_technician',
     'driver', 'security_guard', 'cleaning_services', 'cooking_catering', 'photography',
     'computer_it', 'grocery_retail', 'pharmacy_medicine', 'general_physician', 'dentist_specialist'
   ];
+
+  // Form Wizard dynamic step tracking
+  const [formStep, setFormStep] = useState(1);
+
+  // Advanced real-time camera constraints
+  const [cameraField, setCameraField] = useState<'profilePhoto' | 'nidPhotoFront' | 'nidPhotoBack' | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const startCamera = async (field: 'profilePhoto' | 'nidPhotoFront' | 'nidPhotoBack') => {
+    setCameraField(field);
+    setCameraActive(true);
+    setCameraError('');
+    try {
+      const facing = field === 'profilePhoto' ? 'user' : 'environment';
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing },
+        audio: false
+      });
+      streamRef.current = stream;
+      
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(e => {
+            console.error('Play device video failed', e);
+          });
+        }
+      }, 300);
+    } catch (err: any) {
+      console.error('Camera access failed:', err);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        streamRef.current = stream;
+        setTimeout(() => {
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            videoRef.current.play().catch(e => console.error('Play video stream fallback fail:', e));
+          }
+        }, 300);
+      } catch (err2) {
+        setCameraError(isBN 
+          ? 'ডিভাইসের ক্যামেরা এক্সেস করতে পারছি না। অনুগ্রহ করে ব্রাউজারের অনুমতি পেজে ক্যামেরা অ্যাক্সেস সচল করুন।' 
+          : 'Failed to access device camera. Please grant browser camera permissions.');
+      }
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setCameraActive(false);
+    setCameraField(null);
+    setCameraError('');
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && cameraField) {
+      const video = videoRef.current;
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        try {
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          setForm(prev => ({ ...prev, [cameraField]: dataUrl }));
+        } catch (e) {
+          console.error('Convert canvas to base64 URL failed', e);
+        }
+        stopCamera();
+      }
+    }
+  };
 
   // Fetch logged in profile on load
   const loadProfile = async () => {
@@ -242,6 +341,11 @@ const CreateEditProfile: React.FC = () => {
 
   useEffect(() => {
     loadProfile();
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
   }, []);
 
   // Dynamic Profile Completeness Progress Tracker
@@ -396,6 +500,21 @@ const CreateEditProfile: React.FC = () => {
     }
   }, [activeTab, userRole]);
 
+  useEffect(() => {
+    let intervalId: any;
+    if (activeTab === 'admin' && userRole === 'admin') {
+      loadFirestoreLogs();
+      if (autoPollLogs) {
+        intervalId = setInterval(() => {
+          loadFirestoreLogs();
+        }, 4000); // Poll every 4 seconds for real-time tracking
+      }
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [activeTab, userRole, autoPollLogs]);
+
   // Handle local File attachments (NID & Profile picture files) via dynamic base64 reader
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, field: 'profilePhoto' | 'nidPhotoFront' | 'nidPhotoBack') => {
     const file = e.target.files?.[0];
@@ -488,6 +607,171 @@ const CreateEditProfile: React.FC = () => {
     } finally {
       setGeneratingBio(false);
     }
+  };
+
+  // Download high-integrity local profile backup file (including raw state and base64 documents)
+  const handleDownloadBackup = () => {
+    try {
+      const backupObj = {
+        version: "1.0",
+        type: "profile-backup",
+        exportedAt: new Date().toISOString(),
+        fullName: form.fullName,
+        phone: form.phone,
+        age: form.age,
+        gender: form.gender,
+        division: form.division,
+        district: form.district,
+        thana: form.thana,
+        union: form.union,
+        serviceArea: form.serviceArea,
+        serviceAreasInput: form.serviceAreasInput,
+        nidNumber: form.nidNumber,
+        nidPhotoFront: form.nidPhotoFront,
+        nidPhotoBack: form.nidPhotoBack,
+        fullAddress: form.fullAddress,
+        role: form.role,
+        primaryCategory: form.primaryCategory,
+        specialties: form.specialties,
+        experienceYears: form.experienceYears,
+        bio: form.bio,
+        profilePhoto: form.profilePhoto,
+        isPublic: form.isPublic
+      };
+
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupObj, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      const cleanName = form.fullName ? form.fullName.trim().replace(/\s+/g, '_') : 'Profile';
+      const fileName = `ManpowerHub_Backup_${cleanName}.json`;
+      downloadAnchor.setAttribute("download", fileName);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      
+      setSuccess(isBN ? 'প্রোফাইল ব্যাকআপ ফাইল সফলভাবে ডাউনলোড হয়েছে!' : 'Complete profile backup file downloaded successfully!');
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err) {
+      setError(isBN ? 'ব্যাকআপ তৈরিতে সমস্যা হয়েছে।' : 'Error generating profile backup.');
+    }
+  };
+
+  // Restore profile state and sync directly to live database database (100% same-to-same)
+  const handleRestoreAndSave = async (profileData: any) => {
+    setSaving(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        throw new Error(isBN ? 'লগইন সেশন পাওয়া যায়নি। অনুগ্রহ করে আবার লগইন করুন।' : 'Login session required.');
+      }
+
+      // Format clean, complete form object targeting state
+      const updatedForm = {
+        fullName: profileData.fullName || '',
+        phone: profileData.phone || '',
+        age: profileData.age ? profileData.age.toString() : '',
+        gender: profileData.gender || 'male',
+        division: profileData.division || 'Khulna',
+        district: profileData.district || 'Kushtia',
+        thana: profileData.thana || '',
+        union: profileData.union || '',
+        serviceArea: profileData.serviceArea || '',
+        serviceAreasInput: profileData.serviceAreasInput || (profileData.serviceAreasList ? profileData.serviceAreasList.join(', ') : ''),
+        nidNumber: profileData.nidNumber || '',
+        nidPhotoFront: profileData.nidPhotoFront || '',
+        nidPhotoBack: profileData.nidPhotoBack || '',
+        fullAddress: profileData.fullAddress || '',
+        role: profileData.role || 'worker',
+        primaryCategory: profileData.primaryCategory || 'electrician',
+        specialties: profileData.specialties || [],
+        experienceYears: profileData.experienceYears !== undefined ? profileData.experienceYears.toString() : '0',
+        bio: profileData.bio || '',
+        profilePhoto: profileData.profilePhoto || '',
+        isPublic: profileData.isPublic !== undefined ? profileData.isPublic : true,
+        adminFeedback: profileData.adminFeedback || ''
+      };
+
+      // Set state
+      setForm(updatedForm);
+
+      // Save directly to the server side REST API
+      const payload = {
+        fullName: updatedForm.fullName,
+        phone: updatedForm.phone,
+        age: updatedForm.age ? Number(updatedForm.age) : null,
+        gender: updatedForm.gender,
+        division: updatedForm.division,
+        district: updatedForm.district,
+        thana: updatedForm.thana,
+        union: updatedForm.union,
+        serviceArea: updatedForm.serviceArea,
+        serviceAreasList: updatedForm.serviceAreasInput.split(',').map((s: string) => s.trim()).filter(Boolean),
+        nidNumber: updatedForm.nidNumber,
+        nidPhotoFront: updatedForm.nidPhotoFront,
+        nidPhotoBack: updatedForm.nidPhotoBack,
+        fullAddress: updatedForm.fullAddress,
+        role: updatedForm.role,
+        primaryCategory: updatedForm.primaryCategory,
+        specialties: updatedForm.specialties,
+        experienceYears: Number(updatedForm.experienceYears) || 0,
+        bio: updatedForm.bio,
+        profilePhoto: updatedForm.profilePhoto,
+        isPublic: updatedForm.isPublic
+      };
+
+      const res = await fetch('/api/profiles/me', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message);
+
+      setSuccess(isBN ? 'ফাইল থেকে সম্পূর্ণ প্রোফাইল ১০০% রিস্টোর এবং ডাটাবেজ আপডেট সম্পন্ন হয়েছে!' : '100% full profile data successfully restored and synced to database same-to-same!');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err: any) {
+      setError(err.message || 'Error saving details.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Read upload and parse stream
+  const handleImportBackupFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        const parsed = JSON.parse(text);
+
+        // Support standard direct fallback keys and nested backups
+        let profileData = null;
+        if (parsed.type === 'profile-backup') {
+          profileData = parsed;
+        } else if (parsed.fullName || parsed.phone) {
+          profileData = parsed;
+        }
+
+        if (!profileData) {
+          throw new Error(isBN ? 'ভুল বা অসঙ্গতিপূর্ণ ফরম্যাট। অনুগ্রহ করে একটি সঠিক ম্যানপাওয়ারহাব প্রোফাইল ব্যাকআপ ফাইল (.json) নির্বাচন করুন।' : 'Invalid backup format. Please select a valid ManpowerHub Profile Backup file (.json).');
+        }
+
+        await handleRestoreAndSave(profileData);
+      } catch (err: any) {
+        setError(err.message || (isBN ? 'ব্যাকআপ ফাইল লোড করা সম্ভব হয়নি।' : 'Error parsing profile backup file. Please ensure it is a valid JSON.'));
+      }
+    };
+    reader.readAsText(file);
   };
 
   // Submit User Profile Edit Form
@@ -1068,548 +1352,779 @@ const CreateEditProfile: React.FC = () => {
               </div>
             </div>
 
-            {/* LIVE VIEWS & ANALYTICS COUNTER CARD BAR */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 animate-fade-in">
-              {/* Total Card */}
-              <div className="p-5 rounded-3xl bg-gradient-to-br from-indigo-500/10 via-sky-500/5 to-transparent border border-indigo-500/15 shadow-sm flex items-center justify-between">
+            {/* 100% COMPLETE PROFILE BACKUP & RESTORE UTILITY */}
+            <div className="p-6 bg-gradient-to-br from-blue-50/70 to-indigo-50/40 dark:from-neutral-900 dark:to-slate-900 border border-blue-100/70 dark:border-slate-800 rounded-3xl shadow-sm space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-wider flex items-center gap-1 font-bangla">
-                    <span>👁️</span> {isBN ? 'মোট প্রোফাইল ভিজিটর (Total Views)' : 'Total Portfolio views'}
-                  </span>
-                  <div className="font-mono text-xl sm:text-2xl font-black text-slate-800 dark:text-white">
-                    {profileViewsCount} <span className="text-xs text-slate-400 font-sans font-semibold">ভিউ</span>
-                  </div>
-                  <p className="text-[9.5px] text-gray-500 dark:text-gray-400 font-bold leading-normal font-bangla">
-                    {isBN ? 'ডিরেক্টরি কার্ডটি মোট কতবার ভিজিট বা ওপেন করা হয়েছে।' : 'Accumulated public impressions.'}
+                  <h3 className="text-xs sm:text-sm font-black text-slate-850 dark:text-gray-100 flex items-center gap-2 font-bangla">
+                    <span className="p-1 px-1.5 bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-lg text-xs">📂</span>
+                    <span>{isBN ? 'প্রোফাইল ব্যাকআপ ও পুনরুদ্ধার (100% Full Backup & Restore)' : 'Complete Profile Backup & Restore'}</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-600 dark:text-gray-400 font-semibold leading-relaxed font-bangla">
+                    {isBN 
+                      ? 'আপনার প্রোফাইলের ছবি, এনআইডি এবং সকল তথ্যসহ ১০০% ব্যাকআপ ফাইল ডাউনলোড করে রাখতে পারেন। যেকোনো সময় ফাইলটি আপলোড করে অবিকল সেভ ও পুনরুদ্ধার করা সম্ভব।' 
+                      : 'Download a 100% complete backup file of your profile (including photos, NID, and all fields). You can upload it anytime to restore your exact complete profile state.'}
                   </p>
-                </div>
-                <div className="p-3 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-2xl">
-                  <Eye className="w-6 h-6 animate-pulse" />
                 </div>
               </div>
 
-              {/* Daily view count with simulator */}
-              <div className="p-5 rounded-3xl bg-gradient-to-br from-teal-500/10 via-emerald-500/5 to-transparent border border-teal-500/15 shadow-sm flex items-center justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-black uppercase text-teal-600 dark:text-teal-400 tracking-wider flex items-center gap-1 font-bangla">
-                      <span>📡</span> {isBN ? 'আজকের ডেইলি লাইভ কাউন্টার' : 'Daily 24H Live Activity'}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                {/* Export Action */}
+                <div className="p-4 bg-white dark:bg-neutral-850 rounded-2xl border border-neutral-100 dark:border-neutral-800 flex flex-col justify-between space-y-3">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black uppercase text-blue-600 dark:text-sky-400 tracking-wider flex items-center gap-1.5">
+                      <Download className="w-3.5 h-3.5" />
+                      {isBN ? '১. ব্যাকআপ ডাউনলোড করুন' : '1. Export Profile Backup'}
                     </span>
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                    </span>
-                    <span className="text-[8px] bg-red-500/10 text-red-500 font-black tracking-widest px-1 py-0.5 rounded font-mono">LIVE</span>
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500 font-semibold font-bangla">
+                      {isBN ? 'আপনার প্রোফাইলের সম্পূর্ণ তথ্য একটি সুরক্ষিত JSON ফাইলে ডাউনলোড হবে।' : 'Save your entire profile structure with all fields and media to your device.'}
+                    </p>
                   </div>
-                  <div className="font-mono text-xl sm:text-2xl font-black text-teal-600 dark:text-teal-400">
-                    {Math.max(1, Math.floor(profileViewsCount * 0.15) + (profileViewsCount % 3 === 0 ? 1 : 2))} <span className="text-xs text-slate-400 font-sans font-semibold">জন সক্রিয়</span>
-                  </div>
-                  <p className="text-[9.5px] text-gray-500 dark:text-teal-300/60 font-bold leading-normal font-bangla">
-                    {isBN ? 'গত ২৪ ঘণ্টার মধ্যে প্রফেশনাল লাইভ ডিরেক্টরি কার্ড ভিউ অ্যাক্টিভিটি ট্রেন্ড।' : 'Simulated hourly interactive pings.'}
-                  </p>
+                  <button
+                    type="button"
+                    onClick={handleDownloadBackup}
+                    className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 shadow-md shadow-blue-550/10"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>{isBN ? '📥 ব্যাকআপ ফাইল ডাউনলোড করুন (.json)' : '📥 Download Backup File (.json)'}</span>
+                  </button>
                 </div>
-                <div className="p-3 bg-teal-500/10 text-teal-600 dark:text-teal-400 rounded-2xl">
-                  <TrendingUp className="w-6 h-6 text-teal-500" />
+
+                {/* Import Action */}
+                <div className="p-4 bg-white dark:bg-neutral-850 rounded-2xl border border-neutral-100 dark:border-neutral-800 flex flex-col justify-between space-y-3">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400 tracking-wider flex items-center gap-1.5">
+                      <Upload className="w-3.5 h-3.5" />
+                      {isBN ? '২. ব্যাকআপ ফাইল রিস্টোর করুন' : '2. Restore Profile Backup'}
+                    </span>
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500 font-semibold font-bangla">
+                      {isBN ? 'পূর্বে ডাউনলোড করা ম্যানপাওয়ারহাব (.json/.txt) ব্যাকআপ ফাইল নির্বাচন করুন।' : 'Upload a previously generated ManpowerHub backup file (.json/.txt).'}
+                    </p>
+                  </div>
+
+                  <label className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-550 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 shadow-md shadow-emerald-550/10 text-center">
+                    <Upload className="w-3.5 h-3.5 text-white" />
+                    <span>{isBN ? '📤 ব্যাকআপ আপলোড ও রিস্টোর' : '📤 Upload & Restore Backup'}</span>
+                    <input
+                      type="file"
+                      accept=".json,.txt"
+                      onChange={handleImportBackupFile}
+                      className="hidden"
+                    />
+                  </label>
                 </div>
               </div>
             </div>
 
             <form onSubmit={handleSubmitProfile} className="space-y-6">
             
-            {/* Sec 1: Personal info */}
-            <div className="p-6 bg-white dark:bg-gray-850 rounded-3xl border border-gray-100 dark:border-gray-800 space-y-4 shadow-sm">
-              <h2 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 tracking-widest border-b border-gray-50 dark:border-gray-800 pb-2.5">
-                ১. ব্যক্তিগত পরিচিতি / Personal Identity
-              </h2>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    পূর্ণ নাম অথবা ব্যবসা দোকানের নাম / Full Name or Trade Title *
-                  </label>
-                  <input
-                    type="text"
-                    name="fullName"
-                    required
-                    value={form.fullName}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                    placeholder="যেমন: আব্দুর রহিম ইলেকট্রনিক্স"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    মোবাইল নাম্বার / Emergency Contact *
-                  </label>
-                  <input
-                    type="text"
-                    name="phone"
-                    required
-                    value={form.phone}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                    placeholder="01717XXXXXX"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    বয়স / User Age RANGE
-                  </label>
-                  <input
-                    type="number"
-                    name="age"
-                    min="18"
-                    max="80"
-                    value={form.age}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    লিঙ্গ / Identification Gender
-                  </label>
-                  <select
-                    name="gender"
-                    value={form.gender}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                  >
-                    <option value="male">পুরুষ / Male</option>
-                    <option value="female">মহিলা / Female</option>
-                    <option value="other">অন্যান্য / Other</option>
-                  </select>
-                </div>
-
-                {/* Division dropdown */}
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    বিভাগ (Division)
-                  </label>
-                  <select
-                    name="division"
-                    value={form.division}
-                    onChange={(e) => {
-                      setForm(prev => ({ ...prev, division: e.target.value, district: '' }));
-                    }}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                  >
-                    {DIVISIONS_LIST.map((div) => (
-                      <option key={div.key} value={div.en}>{div.bn} / {div.en}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* District dropdown */}
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    জেলা (District)
-                  </label>
-                  <select
-                    name="district"
-                    value={form.district}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                  >
-                    <option value="">জেলা নির্বাচন করুন</option>
-                    {districtsAvailable.map((dist, idx) => (
-                      <option key={idx} value={dist.en}>{dist.bn} / {dist.en}</option>
-                    ))}
-                  </select>
-                </div>
-
-                 {/* Thana/Upazila input */}
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    থানা / উপজেলা (Upazila/Thana)
-                  </label>
-                  <input
-                    type="text"
-                    name="thana"
-                    value={form.thana}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                    placeholder="যেমন: ভেড়ামারা, মিরপুর, ডুমুরিয়া"
-                  />
-                </div>
-
-                {/* Union input */}
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    ইউনিয়ন / ওয়ার্ড (Union/Ward)
-                  </label>
-                  <input
-                    type="text"
-                    name="union"
-                    value={form.union}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                    placeholder="যেমন: বাহাদুরপুর, দিঘলিয়া ইউনিয়ন, ২নং ওয়ার্ড"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    সার্ভিস এরিয়া বিবরণী / Service Area (যেমন: কুষ্টিয়া সদর, মিরপুর উপজেলা, ফুলতলী)
-                  </label>
-                  <input
-                    type="text"
-                    name="serviceArea"
-                    value={form.serviceArea}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                    placeholder="যেমন: কুষ্টিয়া সদর এবং ভেড়ামারা মোড়"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    সম্পূর্ণ ঠিকানা / Full Physical Address (এডমিন প্যানেলে সংরক্ষিত থাকবে - পাবলিক ভিউতে লালিত)
-                  </label>
-                  <input
-                    type="text"
-                    name="fullAddress"
-                    value={form.fullAddress}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                    placeholder="হোল্ডিং ২১২, রথপাড়া রেলগেট"
-                  />
-                </div>
+            {/* STEP-BY-STEP PROGRESS STEPPER */}
+            <div className="bg-white dark:bg-gray-850 p-4 rounded-3xl border border-gray-150 dark:border-gray-800 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 font-bangla animate-fade-in select-none">
+              <span className="text-[10px] uppercase font-black tracking-widest text-blue-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/35 px-2.5 py-1 rounded-lg">
+                ধাপ ভিত্তিক নিবন্ধন ফরম / Step Registration
+              </span>
+              <div className="flex items-center gap-4 w-full md:w-auto overflow-x-auto py-1.5 scrollbar-thin">
+                <button
+                  type="button"
+                  onClick={() => setFormStep(1)}
+                  className={`flex items-center gap-1.5 text-xs font-black px-3.5 py-2 rounded-xl transition-all cursor-pointer whitespace-nowrap
+                    ${formStep === 1 
+                      ? 'bg-blue-600 text-white shadow-md' 
+                      : 'bg-slate-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-slate-500 hover:text-slate-700'
+                    }`}
+                >
+                  <span className="w-5 h-5 flex items-center justify-center bg-white/20 rounded-full text-[10px]">১</span>
+                  <span>👤 বেসিক পরিচিতি</span>
+                </button>
+                <div className="w-4 h-[2px] bg-gray-200 dark:bg-gray-800 shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => setFormStep(2)}
+                  className={`flex items-center gap-1.5 text-xs font-black px-3.5 py-2 rounded-xl transition-all cursor-pointer whitespace-nowrap
+                    ${formStep === 2 
+                      ? 'bg-blue-600 text-white shadow-md' 
+                      : 'bg-slate-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-slate-500 hover:text-slate-700'
+                    }`}
+                >
+                  <span className="w-5 h-5 flex items-center justify-center bg-white/20 rounded-full text-[10px]">২</span>
+                  <span>💼 কাজের স্কিল ও বায়ো</span>
+                </button>
+                <div className="w-4 h-[2px] bg-gray-200 dark:bg-gray-800 shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => setFormStep(3)}
+                  className={`flex items-center gap-1.5 text-xs font-black px-3.5 py-2 rounded-xl transition-all cursor-pointer whitespace-nowrap
+                    ${formStep === 3 
+                      ? 'bg-blue-600 text-white shadow-md' 
+                      : 'bg-slate-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-slate-500 hover:text-slate-700'
+                    }`}
+                >
+                  <span className="w-5 h-5 flex items-center justify-center bg-white/20 rounded-full text-[10px]">৩</span>
+                  <span>🔒 ছবি ও পরিচয় যাচাই</span>
+                </button>
               </div>
             </div>
 
-            {/* Sec 2: Trade expertise */}
-            <div className="p-6 bg-white dark:bg-gray-850 rounded-3xl border border-gray-100 dark:border-gray-800 space-y-4 shadow-sm">
-              <h2 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 tracking-widest border-b border-gray-50 dark:border-gray-800 pb-2.5">
-                ২. পেশাগত অভিজ্ঞতা ও দক্ষতা টাইপ / Experience & Skills Trade
-              </h2>
+            {/* STEP 1: Basic personal detail form */}
+            {formStep === 1 && (
+              <div className="p-6 bg-white dark:bg-gray-850 rounded-3xl border border-gray-100 dark:border-gray-800 space-y-4 shadow-sm animate-fade-in">
+                <h2 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 tracking-widest border-b border-gray-50 dark:border-gray-800 pb-2.5 flex items-center gap-1.5">
+                  👤 ১. ব্যক্তিগত পরিচিতি / Personal Identity
+                </h2>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    পেশার ধরণ / Registry Role Category
-                  </label>
-                  <select
-                    name="role"
-                    value={form.role}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                  >
-                    <option value="worker">পেশাদার কর্মী / Skilled General Worker</option>
-                    <option value="business">ব্যবসায়ী / Merchant Business Owner</option>
-                    <option value="doctor">সাধারণ চিকিৎসক (MBBS Doctor)</option>
-                    <option value="dentist">দন্ত বিশেষজ্ঞ (Dentist)</option>
-                    <option value="contractor">ঠিকাদার প্রকৌশলী / Civil Contractor</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    অভিজ্ঞতার বছর / Years of Active Experience
-                  </label>
-                  <input
-                    type="number"
-                    name="experienceYears"
-                    min="0"
-                    max="50"
-                    value={form.experienceYears}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    মূল বা প্রাথমিক দক্ষতা বিভাগ / Main Primary Category *
-                  </label>
-                  <select
-                    name="primaryCategory"
-                    value={form.primaryCategory}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                  >
-                    {categoriesKeys.map(k => (
-                      <option key={k} value={k}>{t('jobCategories', k)}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Specialties tag loops */}
-                <div className="sm:col-span-2">
-                  <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
-                    অন্যান্য বিশেষত্ব এবং অতিরিক্ত স্কিল (সর্বোচ্চ ৫টি নির্বাচন করতে পারবেন)
-                  </label>
-                  <div className="flex flex-wrap gap-1.5 p-3.5 bg-gray-50 dark:bg-slate-900 rounded-2xl border border-gray-150 dark:border-gray-800">
-                    {categoriesKeys.map(cat => {
-                      const active = form.specialties.includes(cat);
-                      return (
-                        <button
-                          type="button"
-                          key={cat}
-                          onClick={() => toggleSpecialty(cat)}
-                          className={`text-[9px] px-2.5 py-1.5 rounded-lg font-black tracking-wide border cursor-pointer transition-all active:scale-95
-                            ${active
-                              ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
-                              : 'bg-white dark:bg-gray-850 text-gray-650 dark:text-gray-400 border-gray-200 dark:border-gray-805'
-                            }
-                          `}
-                        >
-                          {t('jobCategories', cat)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Sec 3: Bio description suggest inside custom prompt */}
-            <div className="p-6 bg-white dark:bg-gray-850 rounded-3xl border border-gray-100 dark:border-gray-800 space-y-4 shadow-sm">
-              <h2 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 tracking-widest border-b border-gray-50 dark:border-gray-800 pb-2.5">
-                ৩. পরিচিতি ও বায়ো ডেসক্রিপশন / Bio Summary (With Gemini AI Assistance)
-              </h2>
-
-              {/* Server side Gemini integration framework */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-50 to-teal-50 dark:from-blue-950/15 dark:to-teal-950/10 border border-blue-150/40 dark:border-blue-900/40 space-y-3">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-emerald-500 animate-pulse" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-800 dark:text-gray-200">
-                    আই-সহকারী জেনারেটর (Gemini AI Dynamic Generator)
-                  </span>
-                </div>
-                <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-normal font-semibold">
-                  আপনার নামের ও প্রধান দক্ষতার সাথে সামঞ্জস্য রেখে সুন্দর ও আকর্ষণীয় পরিচিতিমূলক বায়ো লিখে দেবে গুগল জেমিনি এআই মডেল। কাস্টম তথ্য থাকলে নিচে যুক্ত করুন।
-                </p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
-                    value={aiNotes}
-                    onChange={(e) => setAiNotes(e.target.value)}
-                    placeholder="যেমন: কুষ্টিয়া পলিটেকনিক এর ডিপ্লোমা এসি মেরামত ৫ বছরের অভিজ্ঞতা..."
-                    className="flex-grow px-3 py-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs font-semibold rounded-xl focus:outline-none placeholder:text-gray-350 dark:placeholder:text-gray-650"
-                  />
-                  <button
-                    type="button"
-                    disabled={generatingBio}
-                    onClick={handleAiSuggestBio}
-                    className="px-4 py-2 bg-slate-900 dark:bg-gray-800 hover:bg-slate-800 text-white font-extrabold uppercase tracking-wider text-[10px] rounded-xl flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                  >
-                    {generatingBio ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-yellow-400" />}
-                    <span>{generatingBio ? 'বায়ো লিখছে...' : 'জেমিনি দিয়ে বায়ো বানান'}</span>
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-2">
-                  প্রোফাইল বিবরণী / Detailed Bio *
-                </label>
-                <textarea
-                  name="bio"
-                  rows={5}
-                  required
-                  value={form.bio}
-                  onChange={handleInputChange}
-                  placeholder="যেমন: আমি কুষ্টিয়া অঞ্চলের একজন সুদক্ষ ওয়ারিং ইলেকট্রিশিয়ান। বিগত ৫ বছর ধরে রাজকীয় বাড়িতে থ্রি-ফেজ ব্যালান্স ওয়্যারিং কাজ করে আসছি..."
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-2xl resize-none leading-relaxed focus:outline-none"
-                />
-              </div>
-            </div>
-
-            {/* Sec 4: Profile Image Picker Option */}
-            <div className="p-6 bg-white dark:bg-gray-850 rounded-3xl border border-gray-100 dark:border-gray-800 space-y-4 shadow-sm">
-              <h2 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 tracking-widest border-b border-gray-50 dark:border-gray-800 pb-2.5">
-                ৪. প্রোফাইল ছবি / Profile Picture Upload
-              </h2>
-
-              <div className="flex flex-col sm:flex-row gap-4 items-center">
-                <div className="relative shrink-0 select-none">
-                  <img 
-                    src={form.profilePhoto || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200'} 
-                    alt="Preview" 
-                    className="w-20 h-20 rounded-2xl object-cover border-2 border-dashed border-blue-500/20 shadow"
-                  />
-                </div>
-
-                <div className="flex-1 space-y-2 w-full">
-                  <div className="flex gap-2">
-                    <label className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-100 text-white font-black text-[10px] uppercase tracking-wider rounded-xl cursor-pointer transition-all active:scale-95 shadow">
-                      <span>📸 ਗ্যালারি থেকে ছবি যুক্ত করুন</span>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        onChange={(e) => handleFileChange(e, 'profilePhoto')} 
-                        className="hidden" 
-                      />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                      পূর্ণ নাম অথবা ব্যবসা দোকানের নাম / Full Name or Trade Title *
                     </label>
-                    
-                    {form.profilePhoto && (
-                      <button
-                        type="button"
-                        onClick={() => setForm(prev => ({ ...prev, profilePhoto: '' }))}
-                        className="px-3 py-2 border border-red-500 text-red-500 hover:bg-red-50 text-[10px] uppercase font-black rounded-xl cursor-pointer active:scale-95"
-                      >
-                        मुछुन
-                      </button>
-                    )}
+                    <input
+                      type="text"
+                      name="fullName"
+                      required
+                      value={form.fullName}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                      placeholder="যেমন: আব্দুর রহিম ইলেকট্রনিক্স"
+                    />
                   </div>
-                  <p className="text-[10px] text-gray-400 leading-none">ফাইল বা ক্যামেরা দিয়ে সরাসরি ছবি তুলুন (সর্বোচ্চ ২ মেগাবাইট)।</p>
-                  
-                  <input
-                    type="url"
-                    name="profilePhoto"
-                    value={form.profilePhoto}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                    placeholder="অথবা অনলাইন ইউআরএল লিঙ্ক দিন (Photo URL Link)"
-                  />
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                      মোবাইল নাম্বার / Emergency Contact *
+                    </label>
+                    <input
+                      type="text"
+                      name="phone"
+                      required
+                      value={form.phone}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                      placeholder="01717XXXXXX"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                      বয়স / User Age RANGE
+                    </label>
+                    <input
+                      type="number"
+                      name="age"
+                      min="18"
+                      max="80"
+                      value={form.age}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                      লিঙ্গ / Identification Gender
+                    </label>
+                    <select
+                      name="gender"
+                      value={form.gender}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                    >
+                      <option value="male">পুরুষ / Male</option>
+                      <option value="female">মহিলা / Female</option>
+                      <option value="other">অন্যান্য / Other</option>
+                    </select>
+                  </div>
+
+                  {/* Division dropdown */}
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                      বিভাগ (Division)
+                    </label>
+                    <select
+                      name="division"
+                      value={form.division}
+                      onChange={(e) => {
+                        setForm(prev => ({ ...prev, division: e.target.value, district: '' }));
+                      }}
+                      className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                    >
+                      {DIVISIONS_LIST.map((div) => (
+                        <option key={div.key} value={div.en}>{div.bn} / {div.en}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* District dropdown */}
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                      জেলা (District)
+                    </label>
+                    <select
+                      name="district"
+                      value={form.district}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                    >
+                      <option value="">জেলা নির্বাচন করুন</option>
+                      {districtsAvailable.map((dist, idx) => (
+                        <option key={idx} value={dist.en}>{dist.bn} / {dist.en}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Thana/Upazila input */}
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                      থানা / উপজেলা (Upazila/Thana)
+                    </label>
+                    <input
+                      type="text"
+                      name="thana"
+                      value={form.thana}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                      placeholder="যেমন: ভেড়ামারা, মিরপুর, ডুমুরিয়া"
+                    />
+                  </div>
+
+                  {/* Union input */}
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                      ইউনিয়ন / ওয়ার্ড (Union/Ward)
+                    </label>
+                    <input
+                      type="text"
+                      name="union"
+                      value={form.union}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                      placeholder="যেমন: বাহাদুরপুর, দিঘলিয়া ইউনিয়ন, ২নং ওয়ার্ড"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                      সার্ভিস এরিয়া বিবরণী / Service Area (যেমন: কুষ্টিয়া সদর, মিরপুর উপজেলা, ফুলতলী)
+                    </label>
+                    <input
+                      type="text"
+                      name="serviceArea"
+                      value={form.serviceArea}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                      placeholder="যেমন: কুষ্টিয়া সদর এবং ভেড়ামারা মোড়"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                      সম্পূর্ণ ঠিকানা / Full Physical Address (এডমিন প্যানেলে সংরক্ষিত থাকবে - পাবলিক ভিউতে লালিত)
+                    </label>
+                    <input
+                      type="text"
+                      name="fullAddress"
+                      value={form.fullAddress}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                      placeholder="হোল্ডিং ২১২, রথপাড়া রেলগেট"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Sec 5: National ID Card and Multi-Service Areas */}
-            <div className="p-6 bg-gradient-to-r from-emerald-500/5 to-teal-500/5 rounded-3xl border border-emerald-500/20 space-y-5">
-              <h2 className="text-xs font-black uppercase text-emerald-600 dark:text-emerald-400 tracking-widest border-b border-emerald-550/10 pb-2.5 flex items-center gap-1.5">
-                <span>🛡️</span>
-                <span>৫. জাতীয় পরিচয়পত্র ও অতিরিক্ত সার্ভিস এরিয়া / Verification & Service Area List</span>
-              </h2>
+            {/* STEP 2: Work experience, trade categories, and AI bio generator */}
+            {formStep === 2 && (
+              <div className="space-y-6 animate-fade-in">
+                {/* Trade expertise block */}
+                <div className="p-6 bg-white dark:bg-gray-850 rounded-3xl border border-gray-100 dark:border-gray-800 space-y-4 shadow-sm">
+                  <h2 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 tracking-widest border-b border-gray-50 dark:border-gray-800 pb-2.5 flex items-center gap-1.5">
+                    💼 ২. পেশাগত অভিজ্ঞতা ও দক্ষতা টাইপ / Experience & Skills Trade
+                  </h2>
 
-              {/* Service Village input */}
-              <div className="space-y-1">
-                <label className="block text-[10px] font-black uppercase text-neutral-400 dark:text-neutral-550 tracking-wider">
-                  নির্দিষ্ট সার্ভিস এরিয়া সমূহ (কমা দিয়ে একাধিক উপজেলা, পৌরসভা বা গ্রামের নাম লিখুন) *
-                </label>
-                <input
-                  type="text"
-                  name="serviceAreasInput"
-                  value={form.serviceAreasInput}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-2.5 bg-white dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
-                  placeholder="যেমন: কুষ্টিয়া সদর, ভেড়ামারা পৌরসভা, অলিপুর বাজার, মেহেরপুর উপজেলা"
-                />
-                <p className="text-[10px] text-gray-400 leading-normal font-semibold">একাধিক সার্ভিস এরিয়া কমা দিয়ে লিখলে কর্মীর কার্ডের উপরে সুন্দর সার্ভিসিং ট্যাগ ব্যাজ তৈরি হবে।</p>
-              </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                        পেশার ধরণ / Registry Role Category
+                      </label>
+                      <select
+                        name="role"
+                        value={form.role}
+                        onChange={handleInputChange}
+                        className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                      >
+                        <option value="worker">পেশাদার কর্মী / Skilled General Worker</option>
+                        <option value="business">ব্যবসায়ী / Merchant Business Owner</option>
+                        <option value="doctor">সাধারণ চিকিৎসক (MBBS Doctor)</option>
+                        <option value="dentist">দন্ত বিশেষজ্ঞ (Dentist)</option>
+                        <option value="contractor">ঠিকাদার প্রকৌশলী / Civil Contractor</option>
+                      </select>
+                    </div>
 
-              {/* NID number field */}
-              <div className="space-y-1">
-                <label className="block text-[10px] font-black uppercase text-neutral-400 dark:text-neutral-550 tracking-wider">
-                  জাতীয় পরিচয়পত্র এনআইডি নাম্বার / National NID Card ID
-                </label>
-                <input
-                  type="text"
-                  name="nidNumber"
-                  value={form.nidNumber}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-2.5 bg-white dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-550 rounded-xl focus:outline-none"
-                  placeholder="NID Card number (যেমন: 1996501717900)"
-                />
-              </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                        অভিজ্ঞতার বছর / Years of Active Experience
+                      </label>
+                      <input
+                        type="number"
+                        name="experienceYears"
+                        min="0"
+                        max="50"
+                        value={form.experienceYears}
+                        onChange={handleInputChange}
+                        className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                      />
+                    </div>
 
-              {/* Front/Back photo uploads */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                
-                {/* Front Photo Card */}
-                <div className="p-4 bg-white dark:bg-neutral-850 rounded-2xl border border-neutral-150/40 dark:border-neutral-800 space-y-3">
-                  <span className="block text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400 tracking-wide">জাতীয় পরিচয়পত্র (সামনের অংশ / NID Photo Front)</span>
-                  
-                  {form.nidPhotoFront ? (
-                    <div className="relative rounded-lg overflow-hidden border border-neutral-200 shadow-sm leading-none">
-                      <img 
-                        src={form.nidPhotoFront} 
-                        alt="NID Front" 
-                        className="w-full h-24 object-cover" 
+                    <div className="sm:col-span-2">
+                      <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                        মূল বা প্রাথমিক দক্ষতা বিভাগ / Main Primary Category *
+                      </label>
+                      <select
+                        name="primaryCategory"
+                        value={form.primaryCategory}
+                        onChange={handleInputChange}
+                        className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                      >
+                        {categoriesKeys.map(k => (
+                          <option key={k} value={k}>{t('jobCategories', k)}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Specialties tag loops */}
+                    <div className="sm:col-span-2">
+                      <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-1.5">
+                        অন্যান্য বিশেষত্ব এবং অতিরিক্ত স্কিল (সর্বোচ্চ ৫টি নির্বাচন করতে পারবেন)
+                      </label>
+                      <div className="flex flex-wrap gap-1.5 p-3.5 bg-gray-50 dark:bg-slate-900 rounded-2xl border border-gray-150 dark:border-gray-800">
+                        {categoriesKeys.map(cat => {
+                          const active = form.specialties.includes(cat);
+                          return (
+                            <button
+                              type="button"
+                              key={cat}
+                              onClick={() => toggleSpecialty(cat)}
+                              className={`text-[9px] px-2.5 py-1.5 rounded-lg font-black tracking-wide border cursor-pointer transition-all active:scale-95
+                                ${active
+                                  ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                                  : 'bg-white dark:bg-gray-850 text-gray-650 dark:text-gray-400 border-gray-200 dark:border-gray-800'
+                                }
+                              `}
+                            >
+                              {t('jobCategories', cat)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bio text block */}
+                <div className="p-6 bg-white dark:bg-gray-850 rounded-3xl border border-gray-100 dark:border-gray-800 space-y-4 shadow-sm">
+                  <h2 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 tracking-widest border-b border-gray-50 dark:border-gray-800 pb-2.5 flex items-center gap-1.5">
+                    ✨ ৩. পরিচিতি ও বায়ো ডেসক্রিপশন / Bio Summary (With Gemini AI Assistance)
+                  </h2>
+
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-50 to-teal-50 dark:from-blue-950/15 dark:to-teal-950/10 border border-blue-150/40 dark:border-blue-900/40 space-y-3">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-emerald-500 animate-pulse" />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-800 dark:text-gray-200">
+                        আই-সহকারী জেনারেটর (Gemini AI Dynamic Generator)
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-normal font-semibold">
+                      আপনার নামের ও প্রধান দক্ষতার সাথে সামঞ্জস্য রেখে সুন্দর ও আকর্ষণীয় পরিচিতিমূলক বায়ো লিখে দেবে গুগল জেমিনি এআই মডেল। কাস্টম তথ্য থাকলে নিচে যুক্ত করুন।
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={aiNotes}
+                        onChange={(e) => setAiNotes(e.target.value)}
+                        placeholder="যেমন: কুষ্টিয়া পলিটেকনিক এর ডিপ্লোমা এসি মেরামত ৫ বছরের অভিজ্ঞতা..."
+                        className="flex-grow px-3 py-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs font-semibold rounded-xl focus:outline-none placeholder:text-gray-350 dark:placeholder:text-gray-650"
                       />
                       <button
                         type="button"
-                        onClick={() => setForm(prev => ({ ...prev, nidPhotoFront: '' }))}
-                        className="absolute top-1 right-1 px-1.5 py-0.5 bg-red-650 text-white text-[10px] font-black rounded-full hover:scale-105"
+                        disabled={generatingBio}
+                        onClick={handleAiSuggestBio}
+                        className="px-4 py-2 bg-slate-900 dark:bg-gray-800 hover:bg-slate-800 text-white font-extrabold uppercase tracking-wider text-[10px] rounded-xl flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
                       >
-                        ✕
+                        {generatingBio ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-yellow-400" />}
+                        <span>{generatingBio ? 'বায়ো লিখছে...' : 'জেমিনি দিয়ে বায়ো বানান'}</span>
                       </button>
                     </div>
-                  ) : (
-                    <div className="h-24 bg-neutral-50 dark:bg-neutral-900 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800 flex items-center justify-center text-[10px] text-neutral-400 font-bold">
-                      ফাইল সংযুক্ত নেই
-                    </div>
-                  )}
+                  </div>
 
-                  <label className="inline-block px-4 py-2 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-bold text-[10px] rounded-lg cursor-pointer text-center w-full">
-                    <span>📤 ফটো আপলোড করুন</span>
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      onChange={(e) => handleFileChange(e, 'nidPhotoFront')} 
-                      className="hidden" 
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider mb-2">
+                      প্রোফাইল বিবরণী / Detailed Bio *
+                    </label>
+                    <textarea
+                      name="bio"
+                      rows={5}
+                      required
+                      value={form.bio}
+                      onChange={handleInputChange}
+                      placeholder="যেমন: আমি কুষ্টিয়া অঞ্চলের একজন সুদক্ষ ওয়ারিং ইলেকট্রিশিয়ান। বিগত ৫ বছর ধরে রাজকীয় বাড়িতে থ্রি-ফেজ ব্যালান্স ওয়্যারিং কাজ করে আসছি..."
+                      className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-2xl resize-none leading-relaxed focus:outline-none"
                     />
-                  </label>
+                  </div>
                 </div>
+              </div>
+            )}
 
-                {/* Back Photo Card */}
-                <div className="p-4 bg-white dark:bg-neutral-850 rounded-2xl border border-neutral-150/40 dark:border-neutral-800 space-y-3">
-                  <span className="block text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400 tracking-wide">জাতীয় পরিচয়পত্র (পেছনের অংশ / NID Photo Back)</span>
-                  
-                  {form.nidPhotoBack ? (
-                    <div className="relative rounded-lg overflow-hidden border border-neutral-200 shadow-sm leading-none">
+            {/* STEP 3: Upload User Photo, NID photo, extra service locations with live Camera system integration */}
+            {formStep === 3 && (
+              <div className="space-y-6 animate-fade-in">
+                {/* 4. Profile Picture Upload with direct Camera capture modal-inline */}
+                <div className="p-6 bg-white dark:bg-gray-850 rounded-3xl border border-gray-100 dark:border-gray-800 space-y-4 shadow-sm">
+                  <h2 className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 tracking-widest border-b border-gray-50 dark:border-gray-800 pb-2.5 flex items-center gap-1.5">
+                    📸 ৪. প্রোফাইল ছবি / Profile Picture Setup
+                  </h2>
+
+                  <div className="flex flex-col sm:flex-row gap-4 items-center">
+                    <div className="relative shrink-0 select-none">
                       <img 
-                        src={form.nidPhotoBack} 
-                        alt="NID Back" 
-                        className="w-full h-24 object-cover" 
+                        src={form.profilePhoto || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200'} 
+                        alt="Preview" 
+                        className="w-20 h-20 rounded-2xl object-cover border-2 border-dashed border-blue-500/25 shadow"
                       />
-                      <button
-                        type="button"
-                        onClick={() => setForm(prev => ({ ...prev, nidPhotoBack: '' }))}
-                        className="absolute top-1 right-1 px-1.5 py-0.5 bg-red-650 text-white text-[10px] font-black rounded-full hover:scale-105"
-                      >
-                        ✕
-                      </button>
                     </div>
-                  ) : (
-                    <div className="h-24 bg-neutral-50 dark:bg-neutral-900 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800 flex items-center justify-center text-[10px] text-neutral-400 font-bold">
-                      ফাইল সংযুক্ত নেই
-                    </div>
-                  )}
 
-                  <label className="inline-block px-4 py-2 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-bold text-[10px] rounded-lg cursor-pointer text-center w-full">
-                    <span>📤 ফটো আপলোড করুন</span>
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      onChange={(e) => handleFileChange(e, 'nidPhotoBack')} 
-                      className="hidden" 
-                    />
-                  </label>
+                    <div className="flex-1 space-y-2 w-full">
+                      {cameraActive && cameraField === 'profilePhoto' ? (
+                        <div className="p-3 bg-slate-900 border border-slate-700 rounded-2xl space-y-3 relative overflow-hidden">
+                          <span className="block text-[10px] font-black uppercase text-teal-400 tracking-wider font-mono">🎥 লাইভ ক্যামেরা ফিড সচল...</span>
+                          {cameraError ? (
+                            <p className="text-[10px] text-red-400 font-bold leading-normal">{cameraError}</p>
+                          ) : (
+                            <video ref={videoRef} className="w-full h-40 object-cover rounded-xl bg-black border border-slate-750" playsInline muted />
+                          )}
+                          <div className="flex gap-2">
+                            {!cameraError && (
+                              <button
+                                type="button"
+                                onClick={capturePhoto}
+                                className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black rounded-lg cursor-pointer"
+                              >
+                                📸 ছবি ধারণ করুন (Capture)
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={stopCamera}
+                              className="px-3 py-1.5 bg-slate-800 text-slate-355 text-[10px] font-bold rounded-lg cursor-pointer"
+                            >
+                              বন্ধ করুন (Close)
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          <label className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-100 text-white font-black text-[10px] uppercase tracking-wider rounded-xl cursor-pointer transition-all active:scale-95 shadow inline-flex items-center gap-1.5">
+                            <span>📤 গ্যালারি ফাইল</span>
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              onChange={(e) => handleFileChange(e, 'profilePhoto')} 
+                              className="hidden" 
+                            />
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => startCamera('profilePhoto')}
+                            className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-650 hover:opacity-95 text-white font-black text-[10px] uppercase tracking-wider rounded-xl cursor-pointer transition-all active:scale-95 shadow inline-flex items-center gap-1.5"
+                          >
+                            <Camera className="w-3.5 h-3.5 text-blue-200" />
+                            <span>📸 ক্যামেরা তুলে ছবি দিন</span>
+                          </button>
+                          
+                          {form.profilePhoto && (
+                            <button
+                              type="button"
+                              onClick={() => setForm(prev => ({ ...prev, profilePhoto: '' }))}
+                              className="px-3 py-2 border border-red-500 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 text-[10px] uppercase font-black rounded-xl cursor-pointer active:scale-95-none"
+                            >
+                              মুছুন
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      
+                      <p className="text-[10px] text-gray-400 leading-none">গ্যালারি থেকে অথবা সরাসরি নিজস্ব ক্যামেরা দিয়ে সুন্দর ছবি তুলুন (সর্বোচ্চ ২ মেগাবাইট)।</p>
+                      
+                      <input
+                        type="url"
+                        name="profilePhoto"
+                        value={form.profilePhoto}
+                        onChange={handleInputChange}
+                        className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-550 rounded-xl focus:outline-none"
+                        placeholder="অথবা অনলাইন ইউআরএল লিঙ্ক দিন (Photo URL Link)"
+                      />
+                    </div>
+                  </div>
                 </div>
 
-              </div>
-            </div>
+                {/* 5. NID Setup and locations verification card */}
+                <div className="p-6 bg-gradient-to-r from-emerald-500/5 to-teal-500/5 rounded-3xl border border-emerald-500/20 space-y-5">
+                  <h2 className="text-xs font-black uppercase text-emerald-600 dark:text-emerald-400 tracking-widest border-b border-emerald-550/10 pb-2.5 flex items-center gap-1.5">
+                    🛡️ ৫. জাতীয় পরিচয়পত্র ও অতিরিক্ত সার্ভিস এরিয়া / Verification & Service Area List
+                  </h2>
 
-            <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-gray-150 dark:border-gray-800 space-y-2">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  name="isPublic"
-                  id="isPublic"
-                  checked={form.isPublic}
-                  onChange={(e) => setForm(prev => ({ ...prev, isPublic: e.target.checked }))}
-                  className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 border-gray-350 bg-gray-50"
-                />
-                <label htmlFor="isPublic" className="text-[11px] font-extrabold text-slate-700 dark:text-gray-300 cursor-pointer">
-                  আমার বায়ো কার্ডটি ডিরেক্টরিতে লাইভ সবার জন্য দৃশ্যমান রাখুন (Live Public Card Status)
-                </label>
-              </div>
-            </div>
+                  {/* Service Village input */}
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-black uppercase text-neutral-400 dark:text-neutral-550 tracking-wider">
+                      নির্দিষ্ট সার্ভিস এরিয়া সমূহ (কমা দিয়ে একাধিক উপজেলা, পৌরসভা বা গ্রামের নাম লিখুন) *
+                    </label>
+                    <input
+                      type="text"
+                      name="serviceAreasInput"
+                      value={form.serviceAreasInput}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-white dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-50 rounded-xl focus:outline-none"
+                      placeholder="যেমন: কুষ্টিয়া সদর, ভেড়ামারা পৌরসভা, অলিপুর বাজার, মেহেরপুর উপজেলা"
+                    />
+                    <p className="text-[10px] text-gray-400 leading-normal font-semibold">একাধিক সার্ভিস এরিয়া কমা দিয়ে লিখলে কর্মীর কার্ডের উপরে সুন্দর সার্ভিসিং ট্যাগ ব্যাজ তৈরি হবে।</p>
+                  </div>
 
-            <button
-              type="submit"
-              disabled={saving}
-              className="w-full py-4 text-xs font-black uppercase tracking-widest text-white bg-blue-600 hover:bg-blue-500 rounded-2xl transition-all shadow-lg active:scale-95 cursor-pointer flex items-center justify-center gap-2"
-            >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              <span>{saving ? 'প্রোফাইল ফাইল সংরক্ষণ করা হচ্ছে...' : 'প্রোফাইল সেভ করুন (Save Changes)'}</span>
-            </button>
+                  {/* NID number field */}
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-black uppercase text-neutral-400 dark:text-neutral-550 tracking-wider">
+                      জাতীয় পরিচয়পত্র এনআইডি নাম্বার / National NID Card ID
+                    </label>
+                    <input
+                      type="text"
+                      name="nidNumber"
+                      value={form.nidNumber}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 bg-white dark:bg-slate-900 border border-gray-150 dark:border-gray-800 text-xs font-semibold text-slate-900 dark:text-gray-550 rounded-xl focus:outline-none"
+                      placeholder="NID Card number (যেমন: 1996501717900)"
+                    />
+                  </div>
+
+                  {/* Front/Back photo uploads with inline physical cameras */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    
+                    {/* Front Photo Card */}
+                    <div className="p-4 bg-white dark:bg-neutral-850 rounded-2xl border border-neutral-150/40 dark:border-neutral-800 space-y-3">
+                      <span className="block text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400 tracking-wide">জাতীয় পরিচয়পত্র (সামনের অংশ / NID Photo Front)</span>
+                      
+                      {cameraActive && cameraField === 'nidPhotoFront' ? (
+                        <div className="p-2.5 bg-slate-900 border rounded-xl space-y-2 relative overflow-hidden leading-none border-teal-500/20">
+                          <span className="block text-[8px] font-black uppercase tracking-wider text-teal-400 font-mono leading-none">🎥 সিকিউর লাইভ камера...</span>
+                          {cameraError ? (
+                            <p className="text-[10px] text-red-400 font-bold leading-normal">{cameraError}</p>
+                          ) : (
+                            <video ref={videoRef} className="w-full h-28 object-cover rounded-lg bg-black border border-slate-750" playsInline muted />
+                          )}
+                          <div className="flex gap-1.5">
+                            {!cameraError && (
+                              <button
+                                type="button"
+                                onClick={capturePhoto}
+                                className="flex-grow py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-black rounded-md cursor-pointer"
+                              >
+                                📸 স্ন্যাপ ধারণ করুন
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={stopCamera}
+                              className="px-2.5 py-1.5 bg-slate-800 text-slate-300 text-[9px] font-bold rounded-md cursor-pointer"
+                            >
+                              বন্ধ
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          {form.nidPhotoFront ? (
+                            <div className="relative rounded-lg overflow-hidden border border-neutral-200 shadow-sm leading-none">
+                              <img 
+                                src={form.nidPhotoFront} 
+                                alt="NID Front" 
+                                className="w-full h-24 object-cover" 
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setForm(prev => ({ ...prev, nidPhotoFront: '' }))}
+                                className="absolute top-1 right-1 px-1.5 py-1 bg-red-650 text-white text-[10px] font-black rounded-full hover:scale-105"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="h-24 bg-neutral-50 dark:bg-neutral-900 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800 flex items-center justify-center text-[10px] text-neutral-400 font-bold">
+                              ফাইল সংযুক্ত নেই
+                            </div>
+                          )}
+
+                          <div className="flex flex-col gap-1.5">
+                            <label className="inline-block px-4 py-1.5 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-bold text-[10px] rounded-lg cursor-pointer text-center w-full">
+                              <span>📤 ফটো আপলোড করুন</span>
+                              <input 
+                                type="file" 
+                                accept="image/*" 
+                                onChange={(e) => handleFileChange(e, 'nidPhotoFront')} 
+                                className="hidden" 
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => startCamera('nidPhotoFront')}
+                              className="px-4 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-650 text-white hover:opacity-95 text-[10px] font-black uppercase rounded-lg cursor-pointer transition-transform active:scale-95 text-center flex items-center justify-center gap-1.5"
+                            >
+                              <Camera className="w-3.5 h-3.5 text-blue-200" />
+                              <span>📸 ক্যামেরা দিয়ে তুলুন</span>
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Back Photo Card */}
+                    <div className="p-4 bg-white dark:bg-neutral-850 rounded-2xl border border-neutral-150/40 dark:border-neutral-800 space-y-3">
+                      <span className="block text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400 tracking-wide">জাতীয় পরিচয়পত্র (পেছনের অংশ / NID Photo Back)</span>
+                      
+                      {cameraActive && cameraField === 'nidPhotoBack' ? (
+                        <div className="p-2.5 bg-slate-900 border rounded-xl space-y-2 relative overflow-hidden leading-none border-teal-550/20">
+                          <span className="block text-[8px] font-black uppercase tracking-wider text-teal-400 font-mono leading-none">🎥 সিকিউর লাইভ ক্যামেরা...</span>
+                          {cameraError ? (
+                            <p className="text-[10px] text-red-500 font-bold leading-normal">{cameraError}</p>
+                          ) : (
+                            <video ref={videoRef} className="w-full h-28 object-cover rounded-lg bg-black border border-slate-750" playsInline muted />
+                          )}
+                          <div className="flex gap-1.5">
+                            {!cameraError && (
+                              <button
+                                type="button"
+                                onClick={capturePhoto}
+                                className="flex-grow py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-black rounded-md cursor-pointer"
+                              >
+                                📸 স্ন্যাপ ধারণ করুন
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={stopCamera}
+                              className="px-2.5 py-1.5 bg-slate-800 text-slate-300 text-[9px] font-bold rounded-md cursor-pointer"
+                            >
+                              বন্ধ
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          {form.nidPhotoBack ? (
+                            <div className="relative rounded-lg overflow-hidden border border-neutral-200 shadow-sm leading-none">
+                              <img 
+                                src={form.nidPhotoBack} 
+                                alt="NID Back" 
+                                className="w-full h-24 object-cover" 
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setForm(prev => ({ ...prev, nidPhotoBack: '' }))}
+                                className="absolute top-1 right-1 px-1.5 py-1 bg-red-650 text-white text-[10px] font-black rounded-full hover:scale-105"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="h-24 bg-neutral-50 dark:bg-neutral-900 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800 flex items-center justify-center text-[10px] text-neutral-400 font-bold">
+                              ফাইল সংযুক্ত নেই
+                            </div>
+                          )}
+
+                          <div className="flex flex-col gap-1.5">
+                            <label className="inline-block px-4 py-1.5 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-bold text-[10px] rounded-lg cursor-pointer text-center w-full">
+                              <span>📤 ফটো আপলোড করুন</span>
+                              <input 
+                                type="file" 
+                                accept="image/*" 
+                                onChange={(e) => handleFileChange(e, 'nidPhotoBack')} 
+                                className="hidden" 
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => startCamera('nidPhotoBack')}
+                              className="px-4 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-650 text-white hover:opacity-95 text-[10px] font-black uppercase rounded-lg cursor-pointer transition-transform active:scale-95 text-center flex items-center justify-center gap-1.5"
+                            >
+                              <Camera className="w-3.5 h-3.5 text-blue-200" />
+                              <span>📸 ক্যামেরা দিয়ে তুলুন</span>
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 6. Live Public Card Status checkbox */}
+                <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-gray-150 dark:border-gray-805 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      name="isPublic"
+                      id="isPublic"
+                      checked={form.isPublic}
+                      onChange={(e) => setForm(prev => ({ ...prev, isPublic: e.target.checked }))}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 border-gray-355 bg-gray-55"
+                    />
+                    <label htmlFor="isPublic" className="text-[11px] font-extrabold text-slate-705 dark:text-gray-300 cursor-pointer select-none">
+                      আমার বায়ো কার্ডটি ডিরেক্টরিতে লাইভ সবার জন্য দৃশ্যমান রাখুন (Live Public Card Status)
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* STATIC & DYNAMIC STEP NAVIGATION FOOTER CONTROL BUTTONS */}
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-3 font-bangla border-t border-gray-150 dark:border-gray-800">
+              {formStep > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => setFormStep(prev => prev - 1)}
+                  className="w-full sm:w-auto px-6 py-3 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-slate-800 text-xs font-black uppercase tracking-wider rounded-xl cursor-pointer text-slate-700 dark:text-gray-305 transition-transform active:scale-95 text-center shrink-0"
+                >
+                  ◀ পেছনে যান (Back)
+                </button>
+              ) : (
+                <div className="hidden sm:block" />
+              )}
+
+              {formStep < 3 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (formStep === 1) {
+                      if (!form.fullName || !form.phone) {
+                        setError(isBN ? 'অনুগ্ৰহ করে আপনার নাম এবং মোবাইল নম্বর প্রবন্ধ করুন।' : 'Please fill out your Name and Mobile Number.');
+                        return;
+                      }
+                    }
+                    setError('');
+                    setFormStep(prev => prev + 1);
+                  }}
+                  className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-blue-600 to-indigo-650 text-white hover:opacity-95 text-xs font-black uppercase tracking-wider rounded-xl cursor-pointer transition-transform active:scale-95 flex items-center justify-center gap-1.5 shadow-md"
+                >
+                  <span>পরবর্তী ধাপে যান (Next Step)</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="w-full sm:w-auto px-8 py-3.5 text-xs font-black uppercase tracking-widest text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-all shadow-lg active:scale-95 cursor-pointer flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  <span>{saving ? 'প্রোফাইল সেভ করা হচ্ছে...' : 'প্রোফাইল সেভ করুন (Save Changes)'}</span>
+                </button>
+              )}
+            </div>
           </form>
         </div>
       )}
@@ -1902,11 +2417,17 @@ const CreateEditProfile: React.FC = () => {
                     {/* Top banner */}
                     <div className="flex justify-between items-start pb-4 border-b border-white/10">
                       <div>
-                        <div className="text-sm font-black text-amber-500 uppercase tracking-wider">{form.fullName || (isBN ? 'আপনার নাম' : 'John Doe')}</div>
+                        <div className="text-sm font-black text-amber-500 uppercase tracking-wider flex items-center gap-1.5">
+                          <span>{form.fullName || (isBN ? 'আপনার নাম' : 'John Doe')}</span>
+                          {(form.isActive !== false) && (
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Online" />
+                          )}
+                        </div>
                         <div className="text-[10px] text-emerald-400 uppercase font-black tracking-widest">{form.primaryCategory || 'Electrician'}</div>
                       </div>
-                      <div className="px-2 py-0.5 bg-amber-500 text-black text-[8px] font-black uppercase rounded-full shrink-0 tracking-widest">
-                        VIP MERCHANT
+                      <div className="px-2 py-0.5 bg-amber-500 text-black text-[8px] font-black uppercase rounded-full shrink-0 tracking-widest flex items-center gap-1">
+                        <span className="w-1 h-1 rounded-full bg-emerald-500 animate-ping" />
+                        <span>VIP MERCHANT</span>
                       </div>
                     </div>
 
@@ -2727,6 +3248,150 @@ const CreateEditProfile: React.FC = () => {
                   </div>
                 </button>
 
+              </div>
+            </div>
+
+            {/* Real-time Firestore Read/Write Profile Monitor Logs Board */}
+            <div className="p-6 bg-slate-950 border border-slate-800 text-slate-100 rounded-3xl shadow-xl space-y-4 font-mono">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                  <div>
+                    <h3 className="text-xs font-black uppercase text-amber-400 tracking-widest flex items-center gap-2">
+                      <Database className="w-4 h-4 text-emerald-400" />
+                      🔥 ফায়ারস্টোর প্রোফাইল কন্টাক্ট ও রিড/রাইট লাইভ মনিটর (Live Firestore Activity Logger)
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-bold mt-1 font-sans">
+                      Cloud Firestore ভলিউমে প্রোফাইল এবং একাউন্টের লাইভ কুয়েরি, কন্টাক্ট, রিড, রাইট এবং ডিলেশন অপারেশন মনিটর করুন।
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 self-stretch lg:self-auto font-sans justify-end">
+                  {/* Auto polling toggle */}
+                  <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={autoPollLogs}
+                      onChange={(e) => setAutoPollLogs(e.target.checked)}
+                      className="rounded border-slate-800 bg-slate-900 text-emerald-500 focus:ring-emerald-500/20"
+                    />
+                    <span>লাইভ অটো-রিফ্রেশ (Live Track)</span>
+                  </label>
+
+                  {/* Manual Refresh */}
+                  <button
+                    onClick={loadFirestoreLogs}
+                    disabled={isLoadingLogs}
+                    className="p-1 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold border border-slate-700 rounded-lg text-[10px] transition duration-200 uppercase flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isLoadingLogs ? 'animate-spin' : ''}`} />
+                    <span>রিফ্রেশ</span>
+                  </button>
+
+                  {/* Clear Logs */}
+                  <button
+                    onClick={async () => {
+                      if (!confirm(isBN ? 'আপনি কি সব লগ ডিলিট করতে চান?' : 'Clear all cached database logs?')) return;
+                      try {
+                        const token = localStorage.getItem('authToken');
+                        const res = await fetch('/api/admin/firestore-logs', {
+                          method: 'DELETE',
+                          headers: { Authorization: `Bearer ${token}` }
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                          loadFirestoreLogs();
+                        }
+                      } catch (err) {
+                        console.error('Failed to clear firestore logs', err);
+                      }
+                    }}
+                    className="p-1 px-3 bg-rose-950 hover:bg-rose-900 text-rose-300 font-semibold border border-rose-800/60 rounded-lg text-[10px] transition duration-200 uppercase flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>লগ মুছুন</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Logger console feed screen */}
+              <div className="max-h-80 overflow-y-auto rounded-2xl bg-slate-900/60 border border-slate-900 p-4 space-y-2">
+                {firestoreLogs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-slate-550 space-y-2 font-sans">
+                    <Activity className="w-8 h-8 text-slate-600 animate-pulse" />
+                    <p className="text-xs text-slate-400">কোন ফায়ারস্টোর রিড/রাইট রেকর্ড মেমোরিতে সঞ্চিত নেই।</p>
+                    <p className="text-[10px] text-slate-500 font-semibold">প্রোফাইল কুয়েরি করুন বা আপডেট করুন অপারেশন ট্র্যাকিং দেখতে।</p>
+                  </div>
+                ) : (
+                  firestoreLogs.map((log: any) => {
+                    const isSuccess = log.status === 'SUCCESS';
+                    return (
+                      <div
+                        key={log.id}
+                        className={`p-2.5 rounded-xl border text-[11px] leading-relaxed transition-all flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-inner ${
+                          isSuccess
+                            ? 'bg-emerald-950/20 border-emerald-900/40 text-emerald-200/90'
+                            : 'bg-rose-950/35 border-rose-900/50 text-rose-200/90'
+                        }`}
+                      >
+                        <div className="space-y-1 w-full">
+                          {/* Top metadata line */}
+                          <div className="flex items-center flex-wrap gap-2 text-[10px] uppercase font-bold text-slate-400">
+                            <span className="font-sans text-[9px] text-slate-400 bg-slate-950/80 p-0.5 px-1.5 rounded border border-slate-850">
+                              {new Date(log.timestamp).toLocaleTimeString()}
+                            </span>
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${
+                              log.operation === 'SYNC_IN' || log.operation === 'READ' ? 'bg-indigo-950 border border-indigo-700/60 text-indigo-300' :
+                              log.operation === 'WRITE' ? 'bg-amber-950 border border-amber-700/60 text-amber-300' :
+                              log.operation === 'DELETE' ? 'bg-rose-950 border border-rose-700/60 text-rose-300' :
+                              'bg-purple-950 border border-purple-700/60 text-purple-300'
+                            }`}>
+                              {log.operation}
+                            </span>
+                            <span className="text-slate-500">|</span>
+                            <span className="text-slate-300">Doc ID: {log.docId || 'all'}</span>
+                            {log.latencyMs !== undefined && (
+                              <span className="text-slate-450 text-[9.5px] font-semibold bg-slate-950/40 px-1 rounded">Lat: {log.latencyMs}ms</span>
+                            )}
+                          </div>
+
+                          {/* Detail line */}
+                          <div className="text-xs text-slate-200">
+                            🎯 প্রোফাইল/অ্যাকশন:{' '}
+                            <span className="font-semibold font-bangla text-slate-100 italic bg-slate-950/30 px-1.5 py-0.5 rounded border border-slate-900">
+                              {log.profileName || 'সব কর্মী/ ডাটাবেজ'}
+                            </span>{' '}
+                            {log.fields && log.fields.length > 0 && (
+                              <span className="text-[10px] text-slate-400 font-sans font-semibold">
+                                (Keys: [{log.fields.join(', ')}])
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Success/Failure description */}
+                          <div className="flex gap-1.5 items-start">
+                            {isSuccess ? (
+                              <span className="text-[9.5px] font-extrabold text-emerald-450 sm:mt-0 font-sans bg-emerald-950/50 py-0.5 px-1.5 rounded border border-emerald-900/40">🟢 SUCCESS</span>
+                            ) : (
+                              <div className="space-y-1 w-full">
+                                <span className="text-[9.5px] font-extrabold text-rose-450 sm:mt-0 font-sans bg-rose-950/50 py-0.5 px-1.5 rounded border border-rose-900/40">🛑 FAILURE</span>
+                                <pre className="text-[10px] text-rose-300 bg-rose-950/50 p-2 rounded-xl border border-rose-900/40 leading-normal max-w-full overflow-x-auto whitespace-pre-wrap font-mono">
+                                  {log.errorMessage}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Visual performance indicator */}
+                        <div className="hidden sm:block">
+                          <span className={`inline-block w-2.5 h-2.5 rounded-full ${isSuccess ? 'bg-emerald-500 shadow-lg shadow-emerald-500/20' : 'bg-red-500 animate-pulse'}`} />
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
 

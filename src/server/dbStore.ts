@@ -1,26 +1,33 @@
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
-import admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { User, Profile, UserRole, Job } from '../types';
+import { firestoreProfileLogger } from './firestoreLogger';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-let adminDb: any = null;
+let clientDb: any = null;
 
 if (fs.existsSync(configPath)) {
   try {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    const app = admin.apps.length === 0 ? admin.initializeApp({
+    const firebaseConfig = {
+      apiKey: config.apiKey,
+      authDomain: config.authDomain,
       projectId: config.projectId,
-    }) : admin.app();
-    adminDb = getFirestore(app, config.firestoreDatabaseId || '(default)');
-    console.log('🔥 Firebase Admin Firestore initialized successfully for Project:', config.projectId);
+      storageBucket: config.storageBucket,
+      messagingSenderId: config.messagingSenderId,
+      appId: config.appId
+    };
+    const app = initializeApp(firebaseConfig);
+    clientDb = getFirestore(app, config.firestoreDatabaseId || '(default)');
+    console.log('🔥 Firebase Client SDK Firestore initialized successfully inside Node context for Project:', config.projectId);
   } catch (err) {
-    console.error('Firebase Admin init error:', err);
+    console.error('Firebase Client init error:', err);
   }
 }
 
@@ -42,10 +49,10 @@ const ALLOWED_NUMBERS = ['01717968098', '01644549105', '01733777473'];
 
 export function sanitizePhoneNumber(phone: string, idForFallback?: string): string {
   const cleanPhone = (phone || '').trim().replace(/[- ]/g, '');
-  if (ALLOWED_NUMBERS.includes(cleanPhone)) {
+  if (cleanPhone) {
     return cleanPhone;
   }
-  // Fallback to one of the 3 allowed numbers consistently
+  // Fallback to one of the 3 allowed numbers consistently only if empty
   const idx = idForFallback ? (idForFallback.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % ALLOWED_NUMBERS.length) : 0;
   return ALLOWED_NUMBERS[idx];
 }
@@ -278,7 +285,7 @@ const SEED_JOBS: Record<string, Job> = {
 
 class DBStore {
   public schema!: Schema;
-  private db: admin.firestore.Firestore | null = adminDb;
+  private db: any = clientDb;
   public activityLogs: { id: string; name: string; actionBn: string; actionEn: string; time: string; timestamp: number }[] = [
     {
       id: 'log_seed_1',
@@ -407,7 +414,9 @@ class DBStore {
         // Enforce divisions, districts, custom serviceArea, allowed numbers, and correct address values on all profiles
         Object.keys(this.schema.profiles).forEach(id => {
           const profile = this.schema.profiles[id];
-          profile.fullAddress = 'মধ্যবাজার, কর্মকার রোড, ভেড়ামারা, কুষ্টিয়া';
+          if (!profile.fullAddress) {
+            profile.fullAddress = 'মধ্যবাজার, কর্মকার রোড, ভেড়ামারা, কুষ্টিয়া';
+          }
           profile.phone = sanitizePhoneNumber(profile.phone || '', profile.id);
           const matchedSeed = SEED_PROFILES.find(sp => sp.id === id);
           if (matchedSeed) {
@@ -428,99 +437,142 @@ class DBStore {
 
   private async syncFromFirestore() {
     if (!this.db) return;
+    const start = performance.now();
     try {
-      console.log('🔄 Syncing local memory database with Cloud Firestore...');
-      
-      const usersSnap = await this.db.collection('users').get();
-      usersSnap.forEach((doc) => {
-        this.schema.users[doc.id] = doc.data();
-      });
-
-      const profilesSnap = await this.db.collection('profiles').get();
-      profilesSnap.forEach((doc) => {
-        const profile = doc.data() as Profile;
-        profile.fullAddress = 'মধ্যবাজার, কর্মকার রোড, ভেড়ামারা, কুষ্টিয়া';
-        profile.phone = sanitizePhoneNumber(profile.phone || '', profile.id);
-        this.schema.profiles[doc.id] = profile;
-      });
-
-      const jobsSnap = await this.db.collection('jobs').get();
-      jobsSnap.forEach((doc) => {
-        this.schema.jobs[doc.id] = doc.data() as Job;
-      });
-
-      const analyticsDoc = await this.db.collection('analytics').doc('counters').get();
-      if (analyticsDoc.exists) {
-        const data = analyticsDoc.data() || {};
-        if (!this.schema.analytics) {
-          this.schema.analytics = { dailyVisitors: {}, registrations: {} };
-        }
-        if (data.dailyVisitors) this.schema.analytics.dailyVisitors = data.dailyVisitors;
-        if (data.registrations) this.schema.analytics.registrations = data.registrations;
-      }
-
-      console.log(`✅ Cloud Firestore Sync successful: Synced ${usersSnap.size} users, ${profilesSnap.size} profiles, ${jobsSnap.size} jobs.`);
-
-      if (usersSnap.size === 0) {
-        console.log('🌱 Cloud Firestore is empty. Uploading in-memory seed data to Firestore...');
-        await this.syncToFirestore();
-      } else {
-        this.saveLocally();
-      }
-    } catch (err: any) {
-      console.error('❌ Failed syncing database from Firestore:', err.message || err);
-      console.warn('⚠️ Cloud Firestore sync is disabled (possibly due to missing IAM permissions or uncreated database). Standing by with local standalone memory JSON DB.');
-      this.db = null;
-    }
-  }
-
-  private async syncToFirestore() {
-    if (!this.db) return;
-    try {
-      const batchSize = 100;
-      let batch = this.db.batch();
-      let count = 0;
-
-      for (const [id, user] of Object.entries(this.schema.users)) {
-        batch.set(this.db.collection('users').doc(id), user);
-        count++;
-        if (count >= batchSize) {
-          await batch.commit();
-          batch = this.db.batch();
-          count = 0;
-        }
-      }
-
-      for (const [id, profile] of Object.entries(this.schema.profiles)) {
-        batch.set(this.db.collection('profiles').doc(id), profile);
-        count++;
-        if (count >= batchSize) {
-          await batch.commit();
-          batch = this.db.batch();
-          count = 0;
-        }
-      }
-
-      for (const [id, job] of Object.entries(this.schema.jobs || {})) {
-        batch.set(this.db.collection('jobs').doc(id), job);
-        count++;
-        if (count >= batchSize) {
-          await batch.commit();
-          batch = this.db.batch();
-          count = 0;
-        }
-      }
-
-      if (count > 0) {
-        await batch.commit();
-      }
-
-      await this.db.collection('analytics').doc('counters').set(this.schema.analytics || { dailyVisitors: {}, registrations: {} });
-      console.log('🌱 Initial database uploaded to Cloud Firestore successfully.');
-    } catch (err) {
-      console.error('Failed seeding to Firestore:', err);
-    }
-  }
+       console.log('🔄 Syncing local memory database with Cloud Firestore...');
+       
+       const usersSnap = await getDocs(collection(this.db, 'users'));
+       usersSnap.forEach((docRef) => {
+         this.schema.users[docRef.id] = docRef.data();
+       });
+ 
+       const profilesSnap = await getDocs(collection(this.db, 'profiles'));
+       profilesSnap.forEach((docRef) => {
+         const profile = docRef.data() as Profile;
+         if (!profile.fullAddress) {
+           profile.fullAddress = 'মধ্যবাজার, কর্মকার রোড, ভেড়ামারা, কুষ্টিয়া';
+         }
+         profile.phone = sanitizePhoneNumber(profile.phone || '', profile.id);
+         this.schema.profiles[docRef.id] = profile;
+       });
+ 
+       const jobsSnap = await getDocs(collection(this.db, 'jobs'));
+       jobsSnap.forEach((docRef) => {
+         this.schema.jobs[docRef.id] = docRef.data() as Job;
+       });
+ 
+       const analyticsDoc = await getDoc(doc(this.db, 'analytics', 'counters'));
+       if (analyticsDoc.exists()) {
+         const data = analyticsDoc.data() || {};
+         if (!this.schema.analytics) {
+           this.schema.analytics = { dailyVisitors: {}, registrations: {} };
+         }
+         if (data.dailyVisitors) this.schema.analytics.dailyVisitors = data.dailyVisitors;
+         if (data.registrations) this.schema.analytics.registrations = data.registrations;
+       }
+ 
+       const latency = Math.round(performance.now() - start);
+       firestoreProfileLogger.log(
+         'SYNC_IN',
+         'all',
+         'Database Fetch and Sync',
+         ['profiles', 'users', 'jobs'],
+         'SUCCESS',
+         latency
+       );
+       console.log(`✅ Cloud Firestore Sync successful: Synced ${usersSnap.size} users, ${profilesSnap.size} profiles, ${jobsSnap.size} jobs.`);
+ 
+       if (usersSnap.size === 0) {
+         console.log('🌱 Cloud Firestore is empty. Uploading in-memory seed data to Firestore...');
+         await this.syncToFirestore();
+       } else {
+         this.saveLocally();
+       }
+     } catch (err: any) {
+       const latency = Math.round(performance.now() - start);
+       firestoreProfileLogger.log(
+         'SYNC_IN',
+         'all',
+         'Database Fetch and Sync',
+         ['profiles', 'users', 'jobs'],
+         'ERROR',
+         latency,
+         err.message || err.toString()
+       );
+       console.error('❌ Failed syncing database from Firestore:', err.message || err);
+       console.warn('⚠️ Cloud Firestore sync is disabled (possibly due to missing IAM permissions or uncreated database). Standing by with local standalone memory JSON DB.');
+       this.db = null;
+     }
+   }
+ 
+   private async syncToFirestore() {
+     if (!this.db) return;
+     const start = performance.now();
+     try {
+       const batchSize = 100;
+       let batch = writeBatch(this.db);
+       let count = 0;
+ 
+       for (const [id, user] of Object.entries(this.schema.users)) {
+         batch.set(doc(this.db, 'users', id), user);
+         count++;
+         if (count >= batchSize) {
+           await batch.commit();
+           batch = writeBatch(this.db);
+           count = 0;
+         }
+       }
+ 
+       for (const [id, profile] of Object.entries(this.schema.profiles)) {
+         batch.set(doc(this.db, 'profiles', id), profile);
+         count++;
+         if (count >= batchSize) {
+           await batch.commit();
+           batch = writeBatch(this.db);
+           count = 0;
+         }
+       }
+ 
+       for (const [id, job] of Object.entries(this.schema.jobs || {})) {
+         batch.set(doc(this.db, 'jobs', id), job);
+         count++;
+         if (count >= batchSize) {
+           await batch.commit();
+           batch = writeBatch(this.db);
+           count = 0;
+         }
+       }
+ 
+       if (count > 0) {
+         await batch.commit();
+       }
+ 
+       await setDoc(doc(this.db, 'analytics', 'counters'), this.schema.analytics || { dailyVisitors: {}, registrations: {} });
+       
+       const latency = Math.round(performance.now() - start);
+       firestoreProfileLogger.log(
+         'SYNC_OUT',
+         'batch',
+         'Database Upload and Sync',
+         ['profiles', 'users', 'jobs'],
+         'SUCCESS',
+         latency
+       );
+       console.log('🌱 Initial database uploaded to Cloud Firestore successfully.');
+     } catch (err: any) {
+       const latency = Math.round(performance.now() - start);
+       firestoreProfileLogger.log(
+         'SYNC_OUT',
+         'batch',
+         'Database Upload and Sync',
+         ['profiles', 'users', 'jobs'],
+         'ERROR',
+         latency,
+         err.message || err.toString()
+       );
+       console.error('Failed seeding to Firestore:', err);
+     }
+   }
 
   private saveLocally() {
     try {
@@ -617,8 +669,8 @@ class DBStore {
         skillVerified: false,
         trustedWorker: false,
         premiumUser: false,
-        approved: email.trim().toLowerCase() === 'technosparkhandset@gmail.com' || email.trim().toLowerCase() === 'admin@manpowerhub.com',
-        phoneVerified: false
+        approved: true, // Auto-approve by default for convenience, admin retains manual toggle control
+        phoneVerified: true
       },
       profileViews: 0,
       shareCount: { facebook: 0, whatsapp: 0, messenger: 0, native: 0, total: 0 },
@@ -636,8 +688,18 @@ class DBStore {
     this.save();
 
     if (this.db) {
-      this.db.collection('users').doc(userId).set(newUser).catch((e: any) => console.error('Firestore user creation write error:', e));
-      this.db.collection('profiles').doc(profId).set(newProfile).catch((e: any) => console.error('Firestore profile creation write error:', e));
+      setDoc(doc(this.db, 'users', userId), newUser).catch((e: any) => console.error('Firestore user creation write error:', e));
+      const writeStart = performance.now();
+      setDoc(doc(this.db, 'profiles', profId), newProfile)
+        .then(() => {
+          const latency = Math.round(performance.now() - writeStart);
+          firestoreProfileLogger.log('WRITE', profId, newProfile.fullName, Object.keys(newProfile), 'SUCCESS', latency);
+        })
+        .catch((e: any) => {
+          const latency = Math.round(performance.now() - writeStart);
+          firestoreProfileLogger.log('WRITE', profId, newProfile.fullName, Object.keys(newProfile), 'ERROR', latency, e.message || e.toString());
+          console.error('Firestore profile creation write error:', e);
+        });
     }
 
     return { user: newUser, profile: newProfile };
@@ -650,14 +712,26 @@ class DBStore {
     if (updateData.phone) {
       updateData.phone = sanitizePhoneNumber(updateData.phone, profile.user);
     }
-    updateData.fullAddress = 'মধ্যবাজার, কর্মকার রোড, ভেড়ামারা, কুষ্টিয়া';
+    if (!updateData.fullAddress && !profile.fullAddress) {
+      updateData.fullAddress = 'মধ্যবাজার, কর্মকার রোড, ভেড়ামারা, কুষ্টিয়া';
+    }
 
     Object.assign(profile, updateData);
     this.addActivityLog(profile.fullName, 'নিজের প্রোফাইল বা ব্যবসার বিবরণী আপডেট করেছেন', 'updated their profile or business descriptors');
     this.save();
     
     if (this.db) {
-      this.db.collection('profiles').doc(profile.id).set(profile).catch((e: any) => console.error('Firestore updateProfile write error:', e));
+      const writeStart = performance.now();
+      setDoc(doc(this.db, 'profiles', profile.id), profile)
+        .then(() => {
+          const latency = Math.round(performance.now() - writeStart);
+          firestoreProfileLogger.log('WRITE', profile.id, profile.fullName, Object.keys(updateData), 'SUCCESS', latency);
+        })
+        .catch((e: any) => {
+          const latency = Math.round(performance.now() - writeStart);
+          firestoreProfileLogger.log('WRITE', profile.id, profile.fullName, Object.keys(updateData), 'ERROR', latency, e.message || e.toString());
+          console.error('Firestore updateProfile write error:', e);
+        });
     }
     
     return profile;
@@ -669,7 +743,17 @@ class DBStore {
       profile.profileViews = (profile.profileViews || 0) + 1;
       this.save();
       if (this.db) {
-        this.db.collection('profiles').doc(profile.id).update({ profileViews: profile.profileViews }).catch((e: any) => console.error('Firestore view increment error:', e));
+        const writeStart = performance.now();
+        updateDoc(doc(this.db, 'profiles', profile.id), { profileViews: profile.profileViews })
+          .then(() => {
+            const latency = Math.round(performance.now() - writeStart);
+            firestoreProfileLogger.log('WRITE', profile.id, profile.fullName, ['profileViews'], 'SUCCESS', latency);
+          })
+          .catch((e: any) => {
+            const latency = Math.round(performance.now() - writeStart);
+            firestoreProfileLogger.log('WRITE', profile.id, profile.fullName, ['profileViews'], 'ERROR', latency, e.message || e.toString());
+            console.error('Firestore view increment error:', e);
+          });
       }
     }
   }
@@ -688,7 +772,17 @@ class DBStore {
         (profile.shareCount.native || 0);
       this.save();
       if (this.db) {
-        this.db.collection('profiles').doc(profile.id).update({ shareCount: profile.shareCount }).catch((e: any) => console.error('Firestore trackShare write error:', e));
+        const writeStart = performance.now();
+        updateDoc(doc(this.db, 'profiles', profile.id), { shareCount: profile.shareCount })
+          .then(() => {
+            const latency = Math.round(performance.now() - writeStart);
+            firestoreProfileLogger.log('WRITE', profile.id, profile.fullName, ['shareCount'], 'SUCCESS', latency);
+          })
+          .catch((e: any) => {
+            const latency = Math.round(performance.now() - writeStart);
+            firestoreProfileLogger.log('WRITE', profile.id, profile.fullName, ['shareCount'], 'ERROR', latency, e.message || e.toString());
+            console.error('Firestore trackShare write error:', e);
+          });
       }
     }
   }
@@ -716,7 +810,7 @@ class DBStore {
     this.addActivityLog(newJob.postedByName || 'সম্মানিত ইউজার', `নতুন কাজের নিয়োগ বিজ্ঞপ্তি "${newJob.title}" পোস্ট করেছেন`, `published a new job offer "${newJob.title}"`);
     this.save();
     if (this.db) {
-      this.db.collection('jobs').doc(jobId).set(newJob).catch((e: any) => console.error('Firestore createJob write error:', e));
+      setDoc(doc(this.db, 'jobs', jobId), newJob).catch((e: any) => console.error('Firestore createJob write error:', e));
     }
     return newJob;
   }
@@ -726,7 +820,7 @@ class DBStore {
       delete this.schema.jobs[jobId];
       this.save();
       if (this.db) {
-        this.db.collection('jobs').doc(jobId).delete().catch((e: any) => console.error('Firestore deleteJob error:', e));
+        deleteDoc(doc(this.db, 'jobs', jobId)).catch((e: any) => console.error('Firestore deleteJob error:', e));
       }
       return true;
     }
@@ -738,7 +832,7 @@ class DBStore {
       this.schema.jobs[jobId].status = status;
       this.save();
       if (this.db) {
-        this.db.collection('jobs').doc(jobId).update({ status }).catch((e: any) => console.error('Firestore updateJobStatus write error:', e));
+        updateDoc(doc(this.db, 'jobs', jobId), { status }).catch((e: any) => console.error('Firestore updateJobStatus write error:', e));
       }
       return true;
     }
@@ -758,7 +852,7 @@ class DBStore {
     this.schema.analytics.dailyVisitors[today] = (this.schema.analytics.dailyVisitors[today] || 0) + 1;
     this.save();
     if (this.db) {
-      this.db.collection('analytics').doc('counters').set(this.schema.analytics).catch((e: any) => console.error('Firestore trackVisitor write error:', e));
+      setDoc(doc(this.db, 'analytics', 'counters'), this.schema.analytics).catch((e: any) => console.error('Firestore trackVisitor write error:', e));
     }
   }
 
@@ -773,7 +867,7 @@ class DBStore {
     this.schema.analytics.registrations[today] = (this.schema.analytics.registrations[today] || 0) + 1;
     this.save();
     if (this.db) {
-      this.db.collection('analytics').doc('counters').set(this.schema.analytics).catch((e: any) => console.error('Firestore trackRegistration write error:', e));
+      setDoc(doc(this.db, 'analytics', 'counters'), this.schema.analytics).catch((e: any) => console.error('Firestore trackRegistration write error:', e));
     }
   }
 
@@ -946,8 +1040,18 @@ class DBStore {
     this.schema.profiles[profId] = newProfile;
     this.save();
     if (this.db) {
-      this.db.collection('users').doc(userId).set(newUser).catch((e: any) => console.error('Firestore adminAddProfile user write error:', e));
-      this.db.collection('profiles').doc(profId).set(newProfile).catch((e: any) => console.error('Firestore adminAddProfile profile write error:', e));
+      setDoc(doc(this.db, 'users', userId), newUser).catch((e: any) => console.error('Firestore adminAddProfile user write error:', e));
+      const writeStart = performance.now();
+      setDoc(doc(this.db, 'profiles', profId), newProfile)
+        .then(() => {
+          const latency = Math.round(performance.now() - writeStart);
+          firestoreProfileLogger.log('WRITE', profId, newProfile.fullName, Object.keys(newProfile), 'SUCCESS', latency);
+        })
+        .catch((e: any) => {
+          const latency = Math.round(performance.now() - writeStart);
+          firestoreProfileLogger.log('WRITE', profId, newProfile.fullName, Object.keys(newProfile), 'ERROR', latency, e.message || e.toString());
+          console.error('Firestore adminAddProfile profile write error:', e);
+        });
     }
     return newProfile;
   }
@@ -959,7 +1063,9 @@ class DBStore {
     if (profileData.phone) {
       profileData.phone = sanitizePhoneNumber(profileData.phone, profile.user);
     }
-    profileData.fullAddress = 'মধ্যবাজার, কর্মকার রোড, ভেড়ামারা, কুষ্টিয়া';
+    if (!profileData.fullAddress && !profile.fullAddress) {
+      profileData.fullAddress = 'মধ্যবাজার, কর্মকার রোড, ভেড়ামারা, কুষ্টিয়া';
+    }
 
     Object.assign(profile, profileData);
     
@@ -969,14 +1075,24 @@ class DBStore {
       if (user) {
         user.role = profileData.role;
         if (this.db) {
-          this.db.collection('users').doc(user.id).set(user).catch((e: any) => console.error(e));
+          setDoc(doc(this.db, 'users', user.id), user).catch((e: any) => console.error(e));
         }
       }
     }
 
     this.save();
     if (this.db) {
-      this.db.collection('profiles').doc(profileId).set(profile).catch((e: any) => console.error('Firestore adminUpdateProfile error:', e));
+      const writeStart = performance.now();
+      setDoc(doc(this.db, 'profiles', profileId), profile)
+        .then(() => {
+          const latency = Math.round(performance.now() - writeStart);
+          firestoreProfileLogger.log('WRITE', profileId, profile.fullName, Object.keys(profileData), 'SUCCESS', latency);
+        })
+        .catch((e: any) => {
+          const latency = Math.round(performance.now() - writeStart);
+          firestoreProfileLogger.log('WRITE', profileId, profile.fullName, Object.keys(profileData), 'ERROR', latency, e.message || e.toString());
+          console.error('Firestore adminUpdateProfile error:', e);
+        });
     }
     return profile;
   }
@@ -998,12 +1114,22 @@ class DBStore {
       if (userId && this.schema.users[userId]) {
         delete this.schema.users[userId];
         if (this.db) {
-          this.db.collection('users').doc(userId).delete().catch((e: any) => console.error('Firestore delete user error:', e));
+          deleteDoc(doc(this.db, 'users', userId)).catch((e: any) => console.error('Firestore delete user error:', e));
         }
       }
       this.save();
       if (this.db) {
-        this.db.collection('profiles').doc(key).delete().catch((e: any) => console.error('Firestore adminDeleteProfile error:', e));
+        const writeStart = performance.now();
+        deleteDoc(doc(this.db, 'profiles', key))
+          .then(() => {
+            const latency = Math.round(performance.now() - writeStart);
+            firestoreProfileLogger.log('DELETE', key, profile.fullName, [], 'SUCCESS', latency);
+          })
+          .catch((e: any) => {
+            const latency = Math.round(performance.now() - writeStart);
+            firestoreProfileLogger.log('DELETE', key, profile.fullName, [], 'ERROR', latency, e.message || e.toString());
+            console.error('Firestore adminDeleteProfile error:', e);
+          });
       }
       return true;
     }
@@ -1067,16 +1193,34 @@ class DBStore {
     this.save();
 
     if (this.db) {
+      const writeStart = performance.now();
+      const promises = [];
       for (const u of users) {
         if (u && u.id) {
-          this.db.collection('users').doc(u.id).set(this.schema.users[u.id]).catch((e: any) => console.error(e));
+          promises.push(
+            setDoc(doc(this.db, 'users', u.id), this.schema.users[u.id]).catch((e: any) => console.error(e))
+          );
         }
       }
       for (const p of profiles) {
         if (p && p.id) {
-          this.db.collection('profiles').doc(p.id).set(this.schema.profiles[p.id]).catch((e: any) => console.error(e));
+          promises.push(
+            setDoc(doc(this.db, 'profiles', p.id), this.schema.profiles[p.id])
+              .catch((e: any) => {
+                firestoreProfileLogger.log('WRITE', p.id, p.fullName, [], 'ERROR', 0, e.message || e.toString());
+                console.error(e);
+              })
+          );
         }
       }
+
+      Promise.all(promises).then(() => {
+        const latency = Math.round(performance.now() - writeStart);
+        firestoreProfileLogger.log('BULK_RESTORE', 'all', 'Admin Bulk Restore', [], 'SUCCESS', latency);
+      }).catch((err: any) => {
+        const latency = Math.round(performance.now() - writeStart);
+        firestoreProfileLogger.log('BULK_RESTORE', 'all', 'Admin Bulk Restore', [], 'ERROR', latency, err.message || err.toString());
+      });
     }
   }
 }

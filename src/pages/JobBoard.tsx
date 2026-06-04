@@ -3,6 +3,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import { Search, MapPin, Briefcase, Calendar, DollarSign, PlusCircle, MessageSquare } from 'lucide-react';
 import { BANGLADESH_LOCATIONS, DIVISIONS_LIST } from '../data/bangladeshData';
+import { JobCardSkeleton } from '../components/common/Skeleton';
 
 interface Job {
   id: string;
@@ -37,6 +38,8 @@ const JobBoard: React.FC = () => {
   
   // Available categories (mapping translations keys dynamically)
   const categoryKeys = [
+    { key: 'krishikaj', bn: 'কৃষিকাজ', en: 'Agriculture' },
+    { key: 'local_delivery', bn: 'লোকাল ডেলিভারি ম্যান', en: 'Local Delivery Man' },
     { key: 'electrician', bn: 'ইলেকট্রিশিয়ান', en: 'Electrician' },
     { key: 'tailoring', bn: 'দর্জি ও ফ্যাশন', en: 'Tailor & Fashion' },
     { key: 'healthcare', bn: 'স্বাস্থ্যসেবা', en: 'Healthcare' },
@@ -233,9 +236,11 @@ const JobBoard: React.FC = () => {
           <div className="lg:col-span-3 space-y-4">
             
             {loading ? (
-              <div className="flex flex-col items-center justify-center p-20 bg-white dark:bg-gray-850 rounded-2xl border border-gray-100 dark:border-gray-800">
-                <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-3"></div>
-                <span className="text-xs font-bold text-gray-500">{isBN ? 'জব তালিকা লোড হচ্ছে...' : 'Streaming active jobs...'}</span>
+              <div className="space-y-4" id="jobs-skeleton-list">
+                <JobCardSkeleton />
+                <JobCardSkeleton />
+                <JobCardSkeleton />
+                <JobCardSkeleton />
               </div>
             ) : error ? (
               <div className="p-8 text-center bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 rounded-2xl border border-red-100 dark:border-red-900/30">

@@ -10,6 +10,7 @@ import JobBoard from './pages/JobBoard';
 import LoginRegister from './pages/LoginRegister';
 import CreateEditProfile from './components/profile/CreateEditProfile';
 import MerchantJoin from './pages/MerchantJoin';
+import { DiagnosticPanel } from './components/common/DiagnosticPanel';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
@@ -54,6 +55,7 @@ export default function App() {
               }
             />
           </Routes>
+          <DiagnosticPanel />
         </HashRouter>
       </LanguageProvider>
     </ThemeProvider>

@@ -126,6 +126,8 @@ export const translations: Record<string, any> = {
   // ── Job Categories ────────────────────────────────────────────────────────────
   jobCategories: {
     agriculture_farming:  { BN: 'কৃষি ও খামার পরিচালনা',     EN: 'Agriculture & Farming' },
+    krishikaj:            { BN: 'কৃষিকাজ',                    EN: 'Agriculture' },
+    local_delivery:       { BN: 'লোকাল ডেলিভারি ম্যান',        EN: 'Local Delivery Man' },
     beauty_fashion:       { BN: 'অভিনন্দন, বিউটি ও ফ্যাশন',    EN: 'Beauty & Fashion Design' },
     electrician:          { BN: 'অন-কল ইলেকট্রিশিয়ান',       EN: 'On-Call Electrician' },
     construction:         { BN: 'কনস্ট্রাকশন রাজমিস্ত্রি',     EN: 'Masonry & Construction' },

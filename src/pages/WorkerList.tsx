@@ -6,6 +6,7 @@ import { BANGLADESH_LOCATIONS, DIVISIONS_LIST } from '../data/bangladeshData';
 import { Star, MapPin, Briefcase, Award, Eye, X, Phone, UserCheck, ShieldCheck, MessageSquare, Printer } from 'lucide-react';
 import ShareButtons from '../components/profile/ShareButtons';
 import Spinner from '../components/common/Spinner';
+import { WorkerCardSkeleton } from '../components/common/Skeleton';
 
 const calculateCompletenessForProfile = (p: any) => {
   let totalFields = 10;
@@ -56,6 +57,7 @@ const WorkerList: React.FC = () => {
 
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>('');
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
 
   // Visitor rating states
@@ -228,7 +230,12 @@ const WorkerList: React.FC = () => {
       if (match) {
         setSelectedProfile(match);
       } else {
-        fetch(`/api/profiles/${profileSlug}`)
+        const token = localStorage.getItem('authToken');
+        const headers: Record<string, string> = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        fetch(`/api/profiles/${profileSlug}`, { headers })
           .then(res => res.json())
           .then(data => {
             if (data.success) {
@@ -243,6 +250,7 @@ const WorkerList: React.FC = () => {
   // Load verified public directory
   const loadDirectory = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       const q = new URLSearchParams();
       if (roleFilter) q.set('role', roleFilter);
@@ -251,17 +259,27 @@ const WorkerList: React.FC = () => {
       if (districtFilter) q.set('district', districtFilter);
       if (searchKeyword) q.set('search', searchKeyword);
 
-      const res = await fetch(`/api/profiles?${q.toString()}`);
+      const token = localStorage.getItem('authToken');
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`/api/profiles?${q.toString()}`, { headers });
       const data = await res.json();
       if (data.success) {
         setProfiles(data.data);
+        setError('');
+      } else {
+        setError(data.message || (isBN ? 'সার্ভার থেকে তথ্য পাওয়া যায়নি।' : 'No data received from server.'));
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Failed to load talents:", e);
+      setError(isBN ? 'সার্ভার যোগাযোগে ত্রুটি ঘটেছে।' : 'Server communication error.');
     } finally {
       setLoading(false);
     }
-  }, [roleFilter, categoryFilter, divisionFilter, districtFilter, searchKeyword]);
+  }, [roleFilter, categoryFilter, divisionFilter, districtFilter, searchKeyword, isBN]);
 
   useEffect(() => {
     loadDirectory();
@@ -282,7 +300,12 @@ const WorkerList: React.FC = () => {
     try {
       setSelectedProfile(profile);
       // Fetch fresh to trigger view increment in backend
-      const res = await fetch(`/api/profiles/${profile.slug}`);
+      const token = localStorage.getItem('authToken');
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch(`/api/profiles/${profile.slug}`, { headers });
       const data = await res.json();
       if (data.success) {
         setSelectedProfile(data.data);
@@ -293,7 +316,7 @@ const WorkerList: React.FC = () => {
   };
 
   const categoriesKeys = [
-    'agriculture_farming', 'beauty_fashion', 'electrician', 'construction',
+    'krishikaj', 'local_delivery', 'agriculture_farming', 'beauty_fashion', 'electrician', 'construction',
     'civil_engineer', 'land_services', 'helper', 'plumber', 'painter',
     'carpenter', 'ac_technician', 'driver', 'security_guard', 'cleaning_services',
     'cooking_catering', 'tailoring', 'photography', 'computer_it', 'office_support',
@@ -396,7 +419,36 @@ const WorkerList: React.FC = () => {
 
         {/* Profiles Grid */}
         {loading ? (
-          <Spinner />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-8" id="profiles-skeleton-grid">
+            <WorkerCardSkeleton />
+            <WorkerCardSkeleton />
+            <WorkerCardSkeleton />
+            <WorkerCardSkeleton />
+            <WorkerCardSkeleton />
+            <WorkerCardSkeleton />
+          </div>
+        ) : error ? (
+          <div className="text-center py-16 bg-white dark:bg-gray-850 rounded-[32px] border-2 border-red-150 dark:border-red-900/30 shadow-xl max-w-lg mx-auto p-8 space-y-5 animate-fade-in">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-red-50 dark:bg-red-950/40 rounded-full text-red-500 mb-2">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h3 className="text-base font-black text-slate-900 dark:text-white font-bangla">
+              {isBN ? 'সার্ভার পাওয়া যায়নি বা ব্যাকএন্ড সক্রিয় হচ্ছে' : 'Connection Standby / Loading API Backend'}
+            </h3>
+            <p className="text-xs text-gray-550 dark:text-gray-400 font-bold leading-relaxed max-w-sm mx-auto">
+              {error}
+            </p>
+            <div className="pt-2">
+              <button
+                onClick={() => loadDirectory()}
+                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all text-white text-xs font-black rounded-2xl cursor-pointer shadow-md inline-flex items-center gap-2 font-bangla"
+              >
+                <span>{isBN ? 'পুনরায় চেষ্টা করুন' : 'Refresh Connection'}</span>
+              </button>
+            </div>
+          </div>
         ) : profiles.length === 0 ? (
           <div className="text-center py-16 bg-white dark:bg-gray-850 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-inner">
             <Award className="w-10 h-10 text-gray-300 dark:text-gray-600 mx-auto mb-3" />
@@ -470,6 +522,12 @@ const WorkerList: React.FC = () => {
                           referrerPolicy="no-referrer"
                           className="w-24 h-24 rounded-[24px] object-cover border border-neutral-100 dark:border-neutral-800 shadow"
                         />
+                        {/* Pulsing Green Online Status Dot Indicator */}
+                        {p.isActive !== false && (
+                          <div className="absolute bottom-0 right-0 z-10 w-4.5 h-4.5 bg-white dark:bg-neutral-900 rounded-full flex items-center justify-center shadow" title={isBN ? 'বর্তমানে অনলাইন' : 'Online Now'}>
+                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse border border-white dark:border-neutral-900" />
+                          </div>
+                        )}
                       </div>
 
                       {/* Right Column: Stack of Colorful Badges */}
@@ -509,8 +567,14 @@ const WorkerList: React.FC = () => {
 
                     {/* Core Worker Identity Header */}
                     <div className="mt-4">
-                      <h2 className="text-xl font-black text-neutral-900 dark:text-neutral-100 font-bangla tracking-tight group-hover:text-blue-600 transition-colors">
-                        {p.fullName}
+                      <h2 className="text-xl font-black text-neutral-900 dark:text-neutral-100 font-bangla tracking-tight group-hover:text-blue-600 transition-colors flex items-center gap-2 flex-wrap">
+                        <span>{p.fullName}</span>
+                        {p.isActive !== false && (
+                          <span className="inline-flex items-center gap-1 text-[9px] bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 font-black tracking-tight px-2 py-0.5 rounded-full border border-emerald-100 dark:border-emerald-900/50">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            {isBN ? 'অনলাইন' : 'Online'}
+                          </span>
+                        )}
                       </h2>
                       {p.primaryCategory ? (
                         <p className="text-[11px] text-neutral-500 dark:text-neutral-400 font-bold uppercase tracking-wider mt-0.5 shrink-0 flex items-center gap-1">
@@ -639,16 +703,29 @@ const WorkerList: React.FC = () => {
                 
                 {/* Meta details */}
                 <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
-                  <img
-                    src={selectedProfile.profilePhoto || `https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200`}
-                    alt={selectedProfile.fullName}
-                    referrerPolicy="no-referrer"
-                    className="w-20 h-20 rounded-2xl object-cover border border-gray-105 dark:border-gray-700 shadow-md"
-                  />
+                  <div className="relative shrink-0">
+                    <img
+                      src={selectedProfile.profilePhoto || `https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200`}
+                      alt={selectedProfile.fullName}
+                      referrerPolicy="no-referrer"
+                      className="w-20 h-20 rounded-2xl object-cover border border-gray-105 dark:border-gray-700 shadow-md"
+                    />
+                    {selectedProfile.isActive !== false && (
+                      <span className="absolute bottom-0 right-0 z-10 w-4 h-4 bg-white dark:bg-neutral-850 rounded-full flex items-center justify-center shadow" title={isBN ? 'বর্তমানে অনলাইন' : 'Online Now'}>
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse border border-white dark:border-neutral-900" />
+                      </span>
+                    )}
+                  </div>
                   
                   <div className="text-center sm:text-left space-y-1.5 min-w-0">
-                    <h2 className="text-xl font-black text-gray-950 dark:text-white font-bangla">
-                      {selectedProfile.fullName}
+                    <h2 className="text-xl font-black text-gray-950 dark:text-white font-bangla flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                      <span>{selectedProfile.fullName}</span>
+                      {selectedProfile.isActive !== false && (
+                        <span className="inline-flex items-center gap-1.5 text-[9px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-emerald-500/15">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          {isBN ? 'অ্যাক্টিভ অনলাইন' : 'Active Online'}
+                        </span>
+                      )}
                     </h2>
                     
                     <div className="flex items-center justify-center sm:justify-start gap-1">
@@ -904,22 +981,22 @@ const WorkerList: React.FC = () => {
                   <div className="p-4 rounded-2xl border border-gray-100 dark:border-gray-800 space-y-2">
                     <h4 className="text-xs font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider font-sans">যোগাযোগের নম্বর / Call Direct</h4>
                     <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-full bg-blue-500/10 text-blue-600 flex items-center justify-center">
+                      <div className="w-8 h-8 rounded-full bg-blue-500/10 text-blue-600 flex items-center justify-center animate-pulse">
                         <Phone className="w-4 h-4" />
                       </div>
-                      <span className="text-sm font-black text-gray-900 dark:text-white tracking-wide">
-                        {isAdmin ? selectedProfile.phone : `${selectedProfile.phone?.substring(0, 5) || '+8801'}****** (${isBN ? 'শুধুমাত্র এডমিন দেখতে পারবেন' : 'Admin Only'})`}
-                      </span>
+                      <a 
+                        href={`tel:${selectedProfile.phone}`} 
+                        className="text-sm font-black text-blue-600 dark:text-blue-400 hover:underline tracking-wide"
+                      >
+                        {selectedProfile.phone || 'N/A'}
+                      </a>
                     </div>
                   </div>
 
                   <div className="p-4 rounded-2xl border border-gray-100 dark:border-gray-800 space-y-2">
                     <h4 className="text-xs font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider font-sans">সম্পূর্ণ ঠিকানা / Address</h4>
-                    <p className="text-xs font-bold text-gray-705 dark:text-gray-300 font-bangla">
-                      {isAdmin 
-                        ? (selectedProfile.fullAddress || 'কুষ্টিয়া, বাংলাদেশ।') 
-                        : (isBN ? 'গোপন করা হয়েছে (শুধুমাত্র এডমিন দেখতে পারবেন)' : 'Address Hidden (Admins Only View)')
-                      }
+                    <p className="text-xs font-bold text-gray-750 dark:text-gray-300 font-bangla">
+                      {selectedProfile.fullAddress || [selectedProfile.union, selectedProfile.thana, selectedProfile.district, selectedProfile.division].filter(Boolean).join(', ') || 'কুষ্টিয়া, বাংলাদেশ।'}
                     </p>
                   </div>
                 </div>

@@ -7,6 +7,7 @@ import { createServer as createViteServer } from 'vite';
 import { dbStore } from './src/server/dbStore';
 import { suggestBio } from './src/server/geminiService';
 import { UserRole } from './src/types';
+import { firestoreProfileLogger } from './src/server/firestoreLogger';
 
 const app = express();
 const PORT = 3000;
@@ -96,8 +97,8 @@ const adminOnly = (req: AuthenticatedRequest, res: Response, next: NextFunction)
   }
 };
 
-// Optional user parser to check if a requester is Admin (for selective privacy redaction)
-const getRequesterRole = (req: Request): string => {
+// Parse the current logged in user from Authorization headers or cookies
+const getRequesterUser = (req: Request): { id: string; role: string; email: string } | null => {
   try {
     let token = '';
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
@@ -105,12 +106,17 @@ const getRequesterRole = (req: Request): string => {
     } else if (req.cookies && req.cookies.authToken) {
       token = req.cookies.authToken;
     }
-    if (!token) return 'guest';
-    const decoded = jwt.verify(token, JWT_SECRET) as { role: string };
-    return decoded.role || 'guest';
+    if (!token) return null;
+    return jwt.verify(token, JWT_SECRET) as { id: string; role: string; email: string };
   } catch (e) {
-    return 'guest';
+    return null;
   }
+};
+
+// Optional user parser to check if a requester is Admin (for selective privacy redaction)
+const getRequesterRole = (req: Request): string => {
+  const user = getRequesterUser(req);
+  return user ? user.role : 'guest';
 };
 
 // Redacts private information (Mobile, Email, Full physical address) from guests and general users
@@ -563,17 +569,19 @@ app.get('/api/profiles', (req: Request, res: Response) => {
 app.get('/api/profiles/:slug', (req: Request, res: Response) => {
   try {
     const profile = dbStore.getProfileBySlug(req.params.slug);
-    const requesterRole = getRequesterRole(req);
+    const requesterUser = getRequesterUser(req);
+    const requesterRole = requesterUser ? requesterUser.role : 'guest';
+    const isOwner = profile && requesterUser && profile.user === requesterUser.id;
     const isApproved = profile && profile.verification?.approved !== false;
 
-    if (!profile || !profile.isPublic || !profile.isActive || (!isApproved && requesterRole !== 'admin')) {
+    if (!profile || !profile.isPublic || !profile.isActive || (!isApproved && requesterRole !== 'admin' && !isOwner)) {
       res.status(404).json({ success: false, message: 'প্রোফাইলটি পাওয়া যায়নি বা এটি অনুমোদনের অপেক্ষায় রয়েছে।' });
       return;
     }
 
     dbStore.incrementProfileViews(profile.slug);
 
-    const responseData = requesterRole === 'admin' 
+    const responseData = (requesterRole === 'admin' || isOwner) 
       ? profile 
       : redactProfileForPublic(profile);
 
@@ -899,6 +907,26 @@ app.delete('/api/jobs/:id', protect, (req: AuthenticatedRequest, res: Response) 
 });
 
 // --- ADMIN SYSTEM CONTROLS (SECURED) ---
+
+// Real-time Firestore Read/Write Profile Monitor Logs
+app.get('/api/admin/firestore-logs', protect, adminOnly, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const logs = firestoreProfileLogger.getLogs();
+    res.json({ success: true, logs });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'ফায়ারস্টোর লগ লোড করতে ব্যর্থ।' });
+  }
+});
+
+// Clear Firestore Profile Monitor Logs
+app.delete('/api/admin/firestore-logs', protect, adminOnly, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    firestoreProfileLogger.clearLogs();
+    res.json({ success: true, message: 'ফায়ারস্টোর মনিটর লগ সফলভাবে ক্লিন করা হয়েছে।' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'মনিটর লগ ক্লিন করতে ব্যর্থ।' });
+  }
+});
 
 // Get analytics dashboard overview
 app.get('/api/admin/analytics', protect, adminOnly, (req: AuthenticatedRequest, res: Response) => {
